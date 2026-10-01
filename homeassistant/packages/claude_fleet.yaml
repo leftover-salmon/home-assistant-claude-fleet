@@ -1,0 +1,1204 @@
+# /config/packages/claude_fleet.yaml
+# Claude Code fleet: status sensors, plan usage, records, tokens, a status light,
+# daily recap, cleanup every 5 min.
+#
+# Session sensors are created automatically over MQTT discovery by
+# claude-ha-status.sh — every one carries the attribute `claude_session: true`.
+#
+# >>> Status light, optional: an AWTRIX pixel clock needs nothing here (see
+# claude_fleet_awtrix.yaml). For a plain smart bulb, set STATUS LIGHT below
+# (search for it) and reload automations; with none set it does nothing.
+
+input_boolean:
+  claude_lamp_enabled:
+    name: Claude status light
+    icon: mdi:lightbulb-on-outline
+
+# When the daily recap arrives; change it on the dashboard's Setup tab. No `initial:`,
+# because that would reset the user's choice at every restart. A new time input
+# starts at midnight instead, which is useless for a recap (the day has just reset),
+# so "Claude · recap time default" turns midnight into 6 PM at startup.
+input_datetime:
+  claude_recap_time:
+    name: Claude recap time
+    has_date: false
+    has_time: true
+    icon: mdi:clock-outline
+
+template:
+  # ======================================================= PLAN USAGE SOURCE
+  # The ONLY place to edit for plan usage, and with Clawdmeter nothing to edit:
+  # the four attributes of sensor.claude_plan_source below find their
+  # Clawdmeter entities by name suffix, whatever the account is called. (With
+  # several Clawdmeter accounts, the first one wins.) Any other integration that
+  # reports Claude plan limits works too -- "Claude Usage" (hass-claude-usage),
+  # claude-ha: replace each attribute with that integration's entity id in
+  # quotes, e.g.  session_usage: "sensor.your_session_usage"
+  # Session is the 5-hour pool, weekly the 7-day one; usage in %, resets as
+  # timestamps. No integration? Leave it; the sensors stay unknown and the plan
+  # cards hide themselves.
+  #
+  # The source's STATE is its health, because a plan integration that stops
+  # (an expired sign-in, an API change) otherwise fails silently: the gauges keep
+  # showing the last numbers as if they were current.
+  #   ok           reported in the last 20 minutes (Clawdmeter reports every 5)
+  #   stale        nothing reported for 20+ minutes
+  #   unavailable  the integration says unavailable/unknown, often a sign-in
+  #   none         no plan integration: fine, plan cards are simply hidden
+  # "Reported" is HA's last_reported, which moves on every poll even when the
+  # number does not; last_updated would call a quiet Sunday stale.
+  #
+  # Everything else plan-related (time to reset, burn rate, time to limit,
+  # today's peak) is derived below from the four, not read from the
+  # integration, so every install runs the same arithmetic whatever it uses.
+  - sensor:
+      - name: Claude plan source
+        unique_id: claude_plan_source
+        icon: mdi:source-branch-check
+        # reads its own attributes, which lag one render; now() re-renders it
+        # every minute, so right after a reload it says "none" for a minute.
+        # `list + [none]` before `first`: an entity id whose entity has gone
+        # (integration removed, entity renamed) expands to nothing, and `first` of
+        # nothing RAISES under strict undefined, flooding the log instead of
+        # saying "unavailable".
+        # A source that goes unavailable is reported only once it has STAYED so
+        # for 15 minutes (from its last_changed). One failed poll used to raise
+        # the "sign in again" banner at once; Clawdmeter misses a poll now and
+        # then and recovers by itself, so the banner mostly sent you checking a
+        # sign-in that was fine. Until then this keeps saying what it said.
+        state: >
+          {%- set src = this.attributes.get('session_usage', '') if this is defined and this.attributes is defined else '' %}
+          {%- set st = (expand(src) | list + [none]) | first if src else none %}
+          {%- set prev = this.state if this is defined else '' %}
+          {%- if not src %}none
+          {%- elif st is none %}unavailable
+          {%- elif st.state in ['unknown', 'unavailable'] %}
+          {%- if (as_timestamp(now()) - as_timestamp(st.last_changed)) > 900 %}unavailable
+          {%- elif prev in ['ok', 'stale'] %}{{ prev }}
+          {%- else %}ok{% endif %}
+          {%- elif (as_timestamp(now()) - as_timestamp(st.last_reported)) > 1200 %}stale
+          {%- else %}ok{% endif %}
+        attributes:
+          session_usage: >
+            {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_session_usage$') | list + ['']) | first }}
+          session_reset: >
+            {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_session_reset$') | list + ['']) | first }}
+          weekly_usage: >
+            {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_usage$') | list + ['']) | first }}
+          weekly_reset: >
+            {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_reset$') | list + ['']) | first }}
+          minutes_since_report: >
+            {%- set src = this.attributes.get('session_usage', '') if this is defined and this.attributes is defined else '' %}
+            {%- set st = (expand(src) | list + [none]) | first if src else none %}
+            {{ (((as_timestamp(now()) - as_timestamp(st.last_reported)) / 60) | round(0) | int) if st is not none else none }}
+
+  - sensor:
+      - name: Claude plan session usage
+        unique_id: claude_plan_session_usage
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:timer-sand
+        # whole numbers stay whole: through | float alone, an integer feed
+        # rendered as "19.0%" on the gauges
+        state: >
+          {%- set src = state_attr('sensor.claude_plan_source', 'session_usage') or '' %}
+          {#- a source briefly unavailable keeps the last value, so the gauges
+              don't vanish on one failed poll; past 15 minutes the plan source
+              says unavailable, and its banner says these may be out of date -#}
+          {%- set raw = states(src) if src else '' %}
+          {%- if src and raw in ['unknown', 'unavailable'] and this is defined and this.state not in ['unknown', 'unavailable', ''] %}{{ this.state }}
+          {%- else %}
+          {%- set v = raw | float(none) if src else none %}
+          {{ (v | int) if v is not none and v == (v | int) else v }}
+          {%- endif %}
+      - name: Claude plan session reset
+        unique_id: claude_plan_session_reset
+        device_class: timestamp
+        state: >
+          {%- set src = state_attr('sensor.claude_plan_source', 'session_reset') or '' %}
+          {%- set raw = states(src) if src else '' %}
+          {%- if src and raw in ['unknown', 'unavailable'] and this is defined and this.state not in ['unknown', 'unavailable', ''] %}{{ this.state }}
+          {%- else %}{{ as_datetime(raw) if src else none }}{% endif %}
+      - name: Claude plan weekly usage
+        unique_id: claude_plan_weekly_usage
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:calendar-week
+        state: >
+          {%- set src = state_attr('sensor.claude_plan_source', 'weekly_usage') or '' %}
+          {#- a source briefly unavailable keeps the last value, so the gauges
+              don't vanish on one failed poll; past 15 minutes the plan source
+              says unavailable, and its banner says these may be out of date -#}
+          {%- set raw = states(src) if src else '' %}
+          {%- if src and raw in ['unknown', 'unavailable'] and this is defined and this.state not in ['unknown', 'unavailable', ''] %}{{ this.state }}
+          {%- else %}
+          {%- set v = raw | float(none) if src else none %}
+          {{ (v | int) if v is not none and v == (v | int) else v }}
+          {%- endif %}
+      - name: Claude plan weekly reset
+        unique_id: claude_plan_weekly_reset
+        device_class: timestamp
+        state: >
+          {%- set src = state_attr('sensor.claude_plan_source', 'weekly_reset') or '' %}
+          {%- set raw = states(src) if src else '' %}
+          {%- if src and raw in ['unknown', 'unavailable'] and this is defined and this.state not in ['unknown', 'unavailable', ''] %}{{ this.state }}
+          {%- else %}{{ as_datetime(raw) if src else none }}{% endif %}
+  # ==================================================== end of source block
+
+  # ---- setup ---------------------------------------------------------------------
+  # On while something REQUIRED is missing: no session has ever reported, or a
+  # Mac is publishing from an older hook (a session that published in the last
+  # 15 min without tokens_today). It shows the banner on the Sessions tab that
+  # points to the Setup tab. Optional extras never turn it on.
+  - binary_sensor:
+      - name: Claude fleet setup needed
+        unique_id: claude_fleet_setup_needed
+        icon: mdi:list-status
+        state: >
+          {%- set ss = states.sensor | selectattr('attributes.claude_session', 'defined') | list %}
+          {%- set ns = namespace(old=false) %}
+          {%- for s in ss %}
+          {%- set fresh = (as_timestamp(now()) - as_timestamp(s.attributes.get('last_seen'), 0)) < 900 %}
+          {%- if fresh and 'tokens_today' not in s.attributes %}{% set ns.old = true %}{% endif %}
+          {%- endfor %}
+          {{ (ss | count == 0) or ns.old }}
+
+  # ---- derived from the four above --------------------------------------------
+  - sensor:
+      - name: Claude plan session resets in
+        unique_id: claude_plan_session_resets_in
+        unit_of_measurement: min
+        icon: mdi:timer-outline
+        # now() in the template is what makes this re-render every minute
+        state: >
+          {%- set r = states('sensor.claude_plan_session_reset') %}
+          {{ ([0, (as_timestamp(r) - as_timestamp(now())) / 60] | max) | round(1)
+             if r not in ['unknown', 'unavailable', ''] else none }}
+
+  # Burn rate, %/minute, over the last 30 minutes. A trigger-based sensor keeps
+  # its own readings as an attribute (restored across restarts): one per
+  # minute, newest last, older than 30 min dropped. The rate is
+  # (newest - oldest) / minutes between them.
+  #
+  # A DROP in usage means the pool reset, and every reading before the drop
+  # belongs to the old pool. They are discarded, so a fresh pool is never
+  # charged with the last one's burn. A plain 30-minute derivative carries a
+  # reset's negative jump for half an hour, and clamping that to zero only
+  # hides it. Under 5 minutes of readings it reports unknown, not a guess.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+      - trigger: state
+        entity_id: sensor.claude_plan_session_usage
+    sensor:
+      - name: Claude plan usage rate
+        unique_id: claude_plan_usage_rate
+        unit_of_measurement: "%/min"
+        state_class: measurement
+        icon: mdi:fire
+        # Recomputed when the SOURCE moves, and on the minute tick only once it has
+        # been quiet for one poll (5 min + slack), so a stalled pool still decays.
+        # Every minute, the rate drifted between the source's 5-minute updates and
+        # "limit at" jumped by an hour with nothing new to say. The hold cannot be
+        # longer than a poll: a poll that repeats the same value is no state change
+        # in HA, so a 10-minute hold froze the rate at 0.52 while the source's own
+        # had already fallen to 0.20.
+        state: >
+          {%- set tr = trigger | default(none) %}
+          {%- set src = states.sensor.claude_plan_session_usage | default(none) %}
+          {%- set quiet = (as_timestamp(now()) - as_timestamp(src.last_changed)) if src else 9999 %}
+          {%- if tr is mapping and tr.get('platform') == 'time_pattern' and quiet < 330
+                 and this.state not in ['unknown', 'unavailable', 'None', ''] %}{{ this.state }}
+          {%- else %}
+          {%- set u = states('sensor.claude_plan_session_usage') | float(none) %}
+          {%- set t = as_timestamp(now()) | round(0) | int %}
+          {%- set prev = this.attributes.get('readings', []) %}
+          {%- set ns = namespace(k=[]) %}
+          {%- for p in (prev if prev is iterable and prev is not string else []) %}
+            {%- if p is sequence and p | count == 2 and t - (p[0] | int(0)) <= 1800 %}
+              {%- set ns.k = [] if (u is not none and (p[1] | float(0)) > u) else ns.k %}
+              {%- set ns.k = ns.k + ([p] if (u is none or (p[1] | float(0)) <= u) else []) %}
+            {%- endif %}
+          {%- endfor %}
+          {%- if u is none or not ns.k %}{{ none }}
+          {%- else %}
+          {%- set span = (t - (ns.k[0][0] | int)) / 60 %}
+          {{ ((u - (ns.k[0][1] | float)) / span) | round(4) if span >= 5 else none }}
+          {%- endif %}
+          {%- endif %}
+        attributes:
+          readings: >
+            {%- set u = states('sensor.claude_plan_session_usage') | float(none) %}
+            {%- set t = as_timestamp(now()) | round(0) | int %}
+            {%- set prev = this.attributes.get('readings', []) %}
+            {%- set ns = namespace(k=[]) %}
+            {%- for p in (prev if prev is iterable and prev is not string else []) %}
+              {%- if p is sequence and p | count == 2 and t - (p[0] | int(0)) <= 1800 %}
+                {%- set ns.k = [] if (u is not none and (p[1] | float(0)) > u) else ns.k %}
+                {%- set ns.k = ns.k + ([p] if (u is none or (p[1] | float(0)) <= u) else []) %}
+              {%- endif %}
+            {%- endfor %}
+            {{ (ns.k + ([[t, u]] if u is not none else []))[-31:] }}
+
+  - sensor:
+      - name: Claude plan time to limit
+        unique_id: claude_plan_time_to_limit
+        unit_of_measurement: min
+        icon: mdi:timer-alert-outline
+        # rate 0 = no burn = the limit is not coming; a large finite number
+        # rather than unknown, so "limit before reset?" still has an answer
+        state: >
+          {%- set u = states('sensor.claude_plan_session_usage') | float(none) %}
+          {%- set r = states('sensor.claude_plan_usage_rate') | float(none) %}
+          {%- if u is none or r is none %}{{ none }}
+          {%- elif r <= 0 %}99999
+          {%- else %}{{ ([0, (100 - u) / r] | max) | round(1) }}{% endif %}
+
+  # Today's peak of the session pool, for the daily recap. Resets at midnight.
+  - triggers:
+      - trigger: state
+        entity_id: sensor.claude_plan_session_usage
+      - trigger: time
+        at: "00:00:00"
+    sensor:
+      - name: Claude plan session peak today
+        unique_id: claude_plan_session_peak_today
+        unit_of_measurement: "%"
+        icon: mdi:chart-bell-curve
+        state: >
+          {%- set today = now().strftime('%Y-%m-%d') %}
+          {%- set prev = (this.state | float(0)) if this.attributes.get('day', '') == today else 0 %}
+          {{ [prev, states('sensor.claude_plan_session_usage') | float(0)] | max }}
+        attributes:
+          day: "{{ now().strftime('%Y-%m-%d') }}"
+
+  - sensor:
+      - name: Claude fleet status
+        unique_id: claude_fleet_status
+        icon: mdi:robot-outline
+        # worst state wins: needs_input > stale > working > idle > none
+        # stale threshold comes from each session's stale_after_min attribute,
+        # set per Mac via CLAUDE_HA_STALE_MINUTES (0 = never stale, for laptops)
+        state: >
+          {% set ns = namespace(needs=0, stale=0, working=0, idle=0) %}
+          {% for s in states.sensor | selectattr('attributes.claude_session', 'defined') %}
+            {% set age = as_timestamp(now()) - as_timestamp(s.attributes.last_seen, 0) %}
+            {% set limit = (s.attributes.get('stale_after_min', 20) | int(20)) * 60 %}
+            {% if s.state == 'needs_input' %}{% set ns.needs = ns.needs + 1 %}
+            {% elif s.state == 'working' and limit > 0 and age > limit %}{% set ns.stale = ns.stale + 1 %}
+            {% elif s.state == 'working' %}{% set ns.working = ns.working + 1 %}
+            {% elif s.state == 'idle' %}{% set ns.idle = ns.idle + 1 %}
+            {% endif %}
+          {% endfor %}
+          {{ 'needs_input' if ns.needs else 'stale' if ns.stale else 'working'
+             if ns.working else 'idle' if ns.idle else 'none' }}
+        attributes:
+          needs_input: >
+            {{ states.sensor | selectattr('attributes.claude_session', 'defined')
+               | selectattr('state', 'eq', 'needs_input') | list | count }}
+          working: >
+            {{ states.sensor | selectattr('attributes.claude_session', 'defined')
+               | selectattr('state', 'eq', 'working') | list | count }}
+          idle: >
+            {{ states.sensor | selectattr('attributes.claude_session', 'defined')
+               | selectattr('state', 'eq', 'idle') | list | count }}
+          waiting_on: >
+            {{ states.sensor | selectattr('attributes.claude_session', 'defined')
+               | selectattr('state', 'eq', 'needs_input')
+               | map(attribute='attributes.label') | list }}
+
+      # ---- counts for the "sessions over time" chart (numeric, so HA keeps history)
+      # stale = working but silent past that Mac's stale_after_min; excluded from "working"
+      - name: Claude sessions running
+        unique_id: claude_sessions_running
+        unit_of_measurement: sessions
+        state_class: measurement
+        icon: mdi:robot-outline
+        state: >
+          {{ states.sensor | selectattr('attributes.claude_session', 'defined')
+             | selectattr('state', 'in', ['working', 'needs_input', 'idle']) | list | count }}
+      - name: Claude sessions working
+        unique_id: claude_sessions_working
+        unit_of_measurement: sessions
+        state_class: measurement
+        icon: mdi:cog-outline
+        state: >
+          {% set ns = namespace(n=0) %}
+          {% for s in states.sensor | selectattr('attributes.claude_session', 'defined') | selectattr('state', 'eq', 'working') %}
+            {% set limit = (s.attributes.get('stale_after_min', 20) | int(20)) * 60 %}
+            {% set age = as_timestamp(now()) - as_timestamp(s.attributes.last_seen, 0) %}
+            {% if not (limit > 0 and age > limit) %}{% set ns.n = ns.n + 1 %}{% endif %}
+          {% endfor %}
+          {{ ns.n }}
+      - name: Claude sessions stale
+        unique_id: claude_sessions_stale
+        unit_of_measurement: sessions
+        state_class: measurement
+        icon: mdi:timer-sand-empty
+        state: >
+          {% set ns = namespace(n=0) %}
+          {% for s in states.sensor | selectattr('attributes.claude_session', 'defined') | selectattr('state', 'eq', 'working') %}
+            {% set limit = (s.attributes.get('stale_after_min', 20) | int(20)) * 60 %}
+            {% set age = as_timestamp(now()) - as_timestamp(s.attributes.last_seen, 0) %}
+            {% if limit > 0 and age > limit %}{% set ns.n = ns.n + 1 %}{% endif %}
+          {% endfor %}
+          {{ ns.n }}
+      - name: Claude sessions waiting
+        unique_id: claude_sessions_waiting
+        unit_of_measurement: sessions
+        state_class: measurement
+        icon: mdi:account-clock-outline
+        state: >
+          {{ states.sensor | selectattr('attributes.claude_session', 'defined')
+             | selectattr('state', 'eq', 'needs_input') | list | count }}
+      - name: Claude sessions idle
+        unique_id: claude_sessions_idle
+        unit_of_measurement: sessions
+        state_class: measurement
+        icon: mdi:sleep
+        state: >
+          {{ states.sensor | selectattr('attributes.claude_session', 'defined')
+             | selectattr('state', 'eq', 'idle') | list | count }}
+
+  - binary_sensor:
+      - name: Claude anyone waiting
+        unique_id: claude_anyone_waiting
+        icon: mdi:account-clock
+        state: "{{ states('sensor.claude_sessions_waiting') | int(0) > 0 }}"
+
+  # Today's peak concurrency (and when it happened). Resets at midnight.
+  - triggers:
+      - trigger: state
+        entity_id: sensor.claude_sessions_running
+      - trigger: time
+        at: "00:00:00"
+    sensor:
+      - name: Claude peak today
+        unique_id: claude_peak_today
+        unit_of_measurement: sessions
+        icon: mdi:chart-bell-curve-cumulative
+        state: >
+          {% set today = now().strftime('%Y-%m-%d') %}
+          {% set prev = (this.state | int(0)) if this.attributes.get('day', '') == today else 0 %}
+          {% set cur = states('sensor.claude_sessions_running') | int(0) %}
+          {{ [prev, cur] | max }}
+        attributes:
+          day: "{{ now().strftime('%Y-%m-%d') }}"
+          at: >
+            {% set today = now().strftime('%Y-%m-%d') %}
+            {% set same = this.attributes.get('day', '') == today %}
+            {% set prev = (this.state | int(0)) if same else 0 %}
+            {% set cur = states('sensor.claude_sessions_running') | int(0) %}
+            {{ now().strftime('%-I:%M %p') if (cur > prev or not same) and cur > 0
+               else (this.attributes.get('at', '') if same else '') }}
+
+  # share of today's session-time spent actually working (vs waiting / idle / stale)
+  - sensor:
+      - name: Claude working share today
+        unique_id: claude_working_share_today
+        unit_of_measurement: "%"
+        icon: mdi:percent-outline
+        state: >
+          {% set run = states('sensor.claude_running_minutes_today') | float(0) %}
+          {% set work = states('sensor.claude_working_minutes_today') | float(0) %}
+          {{ (100 * work / run) | round(0) if run > 0 else 0 }}
+
+  # minutes today with at least one session waiting on you: the time you cost
+  # the fleet, which is what the KPI row shows (working share can't tell a
+  # session waiting on you from one parked and finished)
+  - sensor:
+      - name: Claude waiting on you today
+        unique_id: claude_waiting_on_you_today
+        unit_of_measurement: min
+        icon: mdi:account-clock
+        state: "{{ (states('sensor.claude_waiting_time_today') | float(0) * 60) | round(0) | int }}"
+
+  # Tokens spent today, every session (live + archived) and its subagents, as the
+  # hook reads them from the transcripts. Cache hit = the share of input read
+  # from the prompt cache, the cheapest tokens there are; a compaction throws
+  # that cache away, so the two sit together.
+  - sensor:
+      - name: Claude tokens today
+        unique_id: claude_tokens_today
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set today = now().strftime('%Y-%m-%d') %}
+          {%- set live = states.sensor | selectattr('attributes.claude_session', 'defined')
+               | selectattr('attributes.day', 'eq', today) | map(attribute='attributes') | list %}
+          {%- set ids = live | map(attribute='session_id') | list %}
+          {%- set arch = (state_attr('sensor.claude_archived_today', 'sessions') or [])
+               if state_attr('sensor.claude_archived_today', 'day') == today else [] %}
+          {%- set ns = namespace(t=0) %}
+          {%- for s in live + (arch | rejectattr('session_id', 'in', ids) | list) %}
+          {%- set k = s.get('tokens_today') if s.get('tokens_today') is mapping else {} %}
+          {%- set ns.t = ns.t + (k.get('input', 0) | int(0)) + (k.get('output', 0) | int(0))
+                         + (k.get('cache_read', 0) | int(0)) + (k.get('cache_write', 0) | int(0)) %}
+          {%- endfor %}
+          {{ ns.t }}
+        attributes:
+          breakdown: >
+            {%- set today = now().strftime('%Y-%m-%d') %}
+            {%- set live = states.sensor | selectattr('attributes.claude_session', 'defined')
+                 | selectattr('attributes.day', 'eq', today) | map(attribute='attributes') | list %}
+            {%- set ids = live | map(attribute='session_id') | list %}
+            {%- set arch = (state_attr('sensor.claude_archived_today', 'sessions') or [])
+                 if state_attr('sensor.claude_archived_today', 'day') == today else [] %}
+            {%- set ns = namespace(i=0, o=0, r=0, w=0, c=0, ca=0, calls=0, bm={}) %}
+            {%- for s in live + (arch | rejectattr('session_id', 'in', ids) | list) %}
+            {%- set k = s.get('tokens_today') if s.get('tokens_today') is mapping else {} %}
+            {%- set ns.i = ns.i + (k.get('input', 0) | int(0)) %}
+            {%- set ns.o = ns.o + (k.get('output', 0) | int(0)) %}
+            {%- set ns.r = ns.r + (k.get('cache_read', 0) | int(0)) %}
+            {%- set ns.w = ns.w + (k.get('cache_write', 0) | int(0)) %}
+            {%- set ns.calls = ns.calls + (k.get('calls', 0) | int(0)) %}
+            {%- set ns.c = ns.c + (s.get('compactions_today', 0) | int(0)) %}
+            {%- set ns.ca = ns.ca + (s.get('auto_compactions_today', 0) | int(0)) %}
+            {#- per model, summed across sessions; a Mac on an older hook has no
+                by_model and simply contributes nothing here -#}
+            {%- set bm = k.get('by_model') if k.get('by_model') is mapping else {} %}
+            {%- for m, v in bm.items() if v is mapping %}
+            {%- set o = ns.bm.get(m, {}) %}
+            {%- set vi = v.get('input', 0) | int(0) %}{% set vo = v.get('output', 0) | int(0) %}
+            {%- set vr = v.get('cache_read', 0) | int(0) %}{% set vw = v.get('cache_write', 0) | int(0) %}
+            {%- set ns.bm = dict(ns.bm, **{m: {
+                  'total': o.get('total', 0) + vi + vo + vr + vw,
+                  'input': o.get('input', 0) + vi, 'output': o.get('output', 0) + vo,
+                  'cache_read': o.get('cache_read', 0) + vr, 'cache_write': o.get('cache_write', 0) + vw,
+                  'calls': o.get('calls', 0) + (v.get('calls', 0) | int(0))}}) %}
+            {%- endfor %}
+            {%- endfor %}
+            {%- set inn = ns.i + ns.r + ns.w %}
+            {{ {'input': ns.i, 'output': ns.o, 'cache_read': ns.r, 'cache_write': ns.w,
+                'calls': ns.calls, 'compactions': ns.c, 'auto_compactions': ns.ca,
+                'by_model': ns.bm,
+                'cache_hit_pct': ((100 * ns.r / inn) | round(1)) if inn > 0 else none} }}
+
+      - name: Claude cache hit today
+        unique_id: claude_cache_hit_today
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:cached
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set v = b.get('cache_hit_pct') if b is mapping else none %}
+          {{ v }}
+
+  # Today's tokens per model FAMILY, one sensor each, for the stacked bars on
+  # the Tokens tab: a chart series is an entity, and entities cannot appear on
+  # the fly as new model names do. A name is filed by the family it contains
+  # (opus-5-5 -> opus), so a new release lands in the right stack; anything
+  # else is "other". The Tokens today card keeps the exact per-model split.
+  # Generated, one pair per family: total tokens, and output tokens alone.
+  - sensor:
+      - name: Claude tokens today opus
+        unique_id: claude_tokens_today_opus
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'opus' %}{% set ns.t = ns.t + (v.get('total', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+      - name: Claude tokens today sonnet
+        unique_id: claude_tokens_today_sonnet
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'sonnet' %}{% set ns.t = ns.t + (v.get('total', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+      - name: Claude tokens today haiku
+        unique_id: claude_tokens_today_haiku
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'haiku' %}{% set ns.t = ns.t + (v.get('total', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+      - name: Claude tokens today fable
+        unique_id: claude_tokens_today_fable
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'fable' %}{% set ns.t = ns.t + (v.get('total', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+      - name: Claude tokens today other
+        unique_id: claude_tokens_today_other
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'other' %}{% set ns.t = ns.t + (v.get('total', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+      - name: Claude output tokens today opus
+        unique_id: claude_output_tokens_today_opus
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'opus' %}{% set ns.t = ns.t + (v.get('output', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+      - name: Claude output tokens today sonnet
+        unique_id: claude_output_tokens_today_sonnet
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'sonnet' %}{% set ns.t = ns.t + (v.get('output', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+      - name: Claude output tokens today haiku
+        unique_id: claude_output_tokens_today_haiku
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'haiku' %}{% set ns.t = ns.t + (v.get('output', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+      - name: Claude output tokens today fable
+        unique_id: claude_output_tokens_today_fable
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'fable' %}{% set ns.t = ns.t + (v.get('output', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+      - name: Claude output tokens today other
+        unique_id: claude_output_tokens_today_other
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
+          {%- set ns = namespace(t=0) %}
+          {%- for m, v in bm.items() if v is mapping %}
+          {%- set f = 'opus' if 'opus' in m else ('sonnet' if 'sonnet' in m else ('haiku' if 'haiku' in m else ('fable' if 'fable' in m else 'other'))) %}
+          {%- if f == 'other' %}{% set ns.t = ns.t + (v.get('output', 0) | int(0)) %}{% endif %}
+          {%- endfor %}
+          {{ ns.t }}
+
+  # RTK, summed over the machines that publish it. "saved" is RTK's saving
+  # capped at what Claude Code would have shown the model (the hook's
+  # BASH_OUTPUT_CAP); "claimed" is RTK's own figure against the full raw output.
+  # A machine counts only if its figures are from today: the sensor keeps
+  # yesterday's value until that Mac next finishes a turn. RTK is optional, so
+  # this is `unknown` only when NO machine has ever reported it, and the
+  # dashboard hides the RTK card on that; a morning before anyone's first turn
+  # reads 0, not unknown, so the card doesn't blink out every midnight.
+  - sensor:
+      - name: Claude RTK saved today
+        unique_id: claude_rtk_saved_today
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:content-cut
+        state: >
+          {%- set today = now().strftime('%Y-%m-%d') %}
+          {%- set ns = namespace(t=0, n=0) %}
+          {%- for s in states.sensor | selectattr('attributes.claude_rtk', 'defined') %}
+          {%- set ns.n = ns.n + 1 %}
+          {%- set d = s.attributes.get('today') %}
+          {%- if s.attributes.get('day') == today and d is mapping %}
+          {%- set ns.t = ns.t + (d.get('saved', 0) | int(0)) %}
+          {%- endif %}
+          {%- endfor %}
+          {{ ns.t if ns.n > 0 else none }}
+
+      # RTK's saving as a share of NEW context: what it kept out, over what would
+      # otherwise have entered the window (saved + cache writes + uncached input).
+      # Not over total tokens: 98% of those are cache reads, the same context
+      # re-read every turn, and against them 45k saved reads as 0.3% -- when a
+      # token kept out of a tool result is also never re-read on later turns.
+      # Only sessions on Macs whose RTK reported today, so a Mac without RTK does
+      # not dilute it.
+      - name: Claude RTK share today
+        unique_id: claude_rtk_share_today
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:content-cut
+        state: >
+          {%- set today = now().strftime('%Y-%m-%d') %}
+          {%- set rk = namespace(saved=0, macs=[]) %}
+          {%- for r in states.sensor | selectattr('attributes.claude_rtk', 'defined') %}
+          {%- set d = r.attributes.get('today') %}
+          {%- if r.attributes.get('day') == today and d is mapping %}
+          {%- set rk.saved = rk.saved + (d.get('saved', 0) | int(0)) %}
+          {%- set rk.macs = rk.macs + [r.attributes.get('machine')] %}
+          {%- endif %}
+          {%- endfor %}
+          {%- set live = states.sensor | selectattr('attributes.claude_session', 'defined')
+               | map(attribute='attributes') | selectattr('day', 'eq', today) | list %}
+          {%- set ids = live | map(attribute='session_id') | list %}
+          {%- set arch = (state_attr('sensor.claude_archived_today', 'sessions') or [])
+               if state_attr('sensor.claude_archived_today', 'day') == today else [] %}
+          {%- set ns = namespace(new=0) %}
+          {%- for s in live + (arch | rejectattr('session_id', 'in', ids) | list) if s.get('machine') in rk.macs %}
+          {%- set k = s.get('tokens_today') if s.get('tokens_today') is mapping else {} %}
+          {%- set ns.new = ns.new + (k.get('cache_write', 0) | int(0)) + (k.get('input', 0) | int(0)) %}
+          {%- endfor %}
+          {%- set den = rk.saved + ns.new %}
+          {{ ((100 * rk.saved / den) | round(1)) if (rk.macs and den > 0) else none }}
+
+  # Keeps today's counters for sessions that the cleanup has removed, so the
+  # recap and the "Today" card still include them. Resets at midnight.
+  - triggers:
+      - trigger: event
+        event_type: claude_session_archived
+      - trigger: time
+        at: "00:00:00"
+    sensor:
+      - name: Claude archived today
+        unique_id: claude_archived_today
+        icon: mdi:archive-outline
+        state: >
+          {% set today = now().strftime('%Y-%m-%d') %}
+          {% set prev = this.attributes.get('sessions', []) if this.attributes.get('day', '') == today else [] %}
+          {% set add = 1 if (trigger.platform == 'event' and trigger.event.data.day == today
+                             and trigger.event.data.session_id not in (prev | map(attribute='session_id') | list)) else 0 %}
+          {{ (prev | count) + add }}
+        attributes:
+          day: "{{ now().strftime('%Y-%m-%d') }}"
+          sessions: >
+            {% set today = now().strftime('%Y-%m-%d') %}
+            {% set prev = this.attributes.get('sessions', []) if this.attributes.get('day', '') == today else [] %}
+            {% if trigger.platform == 'event' and trigger.event.data.day == today
+                  and trigger.event.data.session_id not in (prev | map(attribute='session_id') | list) %}
+              {% set d = trigger.event.data %}
+              {{ prev + [{'session_id': d.session_id, 'label': d.label, 'machine': d.machine,
+                          'prompts_today': d.prompts_today | int(0), 'prs_today': d.prs_today | default([], true) | list,
+                          'wait_minutes_today': d.wait_minutes_today | int(0), 'day': d.day,
+                          'tokens_today': d.get('tokens_today') if d.get('tokens_today') is mapping else {},
+                          'compactions_today': d.get('compactions_today', 0) | int(0),
+                          'auto_compactions_today': d.get('auto_compactions_today', 0) | int(0)}] }}
+            {% else %}
+              {{ prev }}
+            {% endif %}
+
+  # Weekly-limit points used per day, for the weekly pace's "heavy day". The
+  # chart on the Tokens tab draws the same thing, but a chart's numbers are not
+  # a sensor. Counted from rises against a high-water mark: a big drop is the
+  # weekly reset and restarts the mark; a small dip is the source wobbling
+  # (41 -> 40 -> 41), which must not count the point twice. Unavailable in
+  # between loses nothing, because the mark, not the previous state, is what
+  # a rise is measured from. Keeps the last 8 days.
+  - triggers:
+      - trigger: state
+        entity_id: sensor.claude_plan_weekly_usage
+    sensor:
+      - name: Claude weekly points by day
+        unique_id: claude_weekly_points_by_day
+        unit_of_measurement: points
+        icon: mdi:calendar-today
+        state: >
+          {%- set today = now().strftime('%Y-%m-%d') %}
+          {%- set d = this.attributes.get('days') if this.attributes.get('days') is mapping else {} %}
+          {%- set mark = this.attributes.get('mark') %}
+          {%- set t = trigger.to_state.state | float(none) %}
+          {%- set rise = (t - mark) if (t is not none and mark is not none and t > mark) else 0 %}
+          {{ ((d.get(today, 0) | float(0)) + rise) | round(1) }}
+        attributes:
+          mark: >
+            {%- set mark = this.attributes.get('mark') %}
+            {%- set t = trigger.to_state.state | float(none) %}
+            {%- if t is none %}{{ mark }}
+            {%- elif mark is none or t > mark or t < mark - 20 %}{{ t }}
+            {%- else %}{{ mark }}{% endif %}
+          days: >
+            {%- set today = now().strftime('%Y-%m-%d') %}
+            {%- set cutoff = (now() - timedelta(days=8)).strftime('%Y-%m-%d') %}
+            {%- set d = this.attributes.get('days') if this.attributes.get('days') is mapping else {} %}
+            {%- set mark = this.attributes.get('mark') %}
+            {%- set t = trigger.to_state.state | float(none) %}
+            {%- set rise = (t - mark) if (t is not none and mark is not none and t > mark) else 0 %}
+            {%- set ns = namespace(out={}) %}
+            {%- for k, v in d.items() if k > cutoff and k != today %}{% set ns.out = dict(ns.out, **{k: v}) %}{% endfor %}
+            {{ dict(ns.out, **{today: ((d.get(today, 0) | float(0)) + rise) | round(1)}) }}
+
+  # Where each plan pool is HEADED at its reset, as ok / tight / over, for the
+  # gauge colour. A fixed threshold on "% used" turns 75% yellow whether the
+  # pool resets in ten minutes or four hours; the question that matters is
+  # whether you run out first. Both use the same arithmetic the "At this rate"
+  # card prints, so a colour can never disagree with the sentence beside it:
+  #   session: used + usage_rate x minutes left (the card's ttl < resets_in)
+  #   weekly:  points over pace, used minus % of the week elapsed (the card's
+  #            "N over pace"): green on or under, yellow 3-9 over, red 10+
+  # Early in a window the projection is noise (a couple of heavy minutes swing
+  # it), so a projected breach below 20% of the session or 10% of the week is
+  # "tight", never "over" -- the same restraint as the card's "though it is early".
+  - sensor:
+      - name: Claude session pace
+        unique_id: claude_session_pace
+        icon: mdi:speedometer
+        state: >
+          {%- set use = states('sensor.claude_plan_session_usage') | float(-1) %}
+          {%- set rate = states('sensor.claude_plan_usage_rate') | float(-1) %}
+          {%- set mins = states('sensor.claude_plan_session_resets_in') | float(-1) %}
+          {%- if use < 0 or rate < 0 or mins < 0 %}unknown
+          {%- else %}
+          {%- set proj = use + rate * mins %}
+          {%- if use >= 100 or (proj >= 100 and use >= 20) %}over
+          {%- elif proj >= 90 %}tight
+          {%- else %}ok{% endif %}
+          {%- endif %}
+        attributes:
+          projected_at_reset: >
+            {%- set use = states('sensor.claude_plan_session_usage') | float(-1) %}
+            {%- set rate = states('sensor.claude_plan_usage_rate') | float(-1) %}
+            {%- set mins = states('sensor.claude_plan_session_resets_in') | float(-1) %}
+            {{ (use + rate * mins) | round(0) | int if use >= 0 and rate >= 0 and mins >= 0 else none }}
+      - name: Claude weekly pace
+        unique_id: claude_weekly_pace
+        icon: mdi:speedometer-slow
+        state: >
+          {%- set use = states('sensor.claude_plan_weekly_usage') | float(-1) %}
+          {%- set r = as_datetime(states('sensor.claude_plan_weekly_reset')) %}
+          {%- if use < 0 or not r %}unknown
+          {%- else %}
+          {%- set el = 100 * (1 - ((as_timestamp(r) - as_timestamp(now())) / (7 * 86400))) %}
+          {#- by points over pace, the unit the card prints. On pace is GREEN:
+              using the whole week is what the subscription is for, and the
+              first cut had "77% used against 77% of the week" in yellow.
+              10 over is the same line the aside treats as worth remarking on. -#}
+          {#- the SAME rounded integers the "At this rate" card prints: unrounded,
+              82% against 79.4% elapsed was 2.6 over and amber, beside a card
+              that said "82% used against 80% of the week, on pace" -#}
+          {%- set over = (use | round(0) | int) - (el | round(0) | int) %}
+          {#- On pace is not the same as safe. 90% used at 90% of the week is on
+              pace with only 10 points left, and one heavy day burns more than
+              that. So also tight when the headroom is less than a heavy day
+              would use before the reset: `at_risk`, below. -#}
+          {#- computed here, not read back from the attributes below: those
+              render AFTER the state, so reading them lags a render behind -#}
+          {%- set d = state_attr('sensor.claude_weekly_points_by_day', 'days') %}
+          {%- set cutoff = (now() - timedelta(days=7)).strftime('%Y-%m-%d') %}
+          {%- set seen = (d.items() | selectattr('0', 'gt', cutoff) | map(attribute='1') | list) if d is mapping else [] %}
+          {%- set heavy = [seen | max if seen else 0, 100 / 7 * 1.5] | max %}
+          {%- set h = (as_timestamp(r) - as_timestamp(now())) / 3600 %}
+          {%- set spike = heavy * ([[h, 24] | min, 0] | max) / 24 %}
+          {%- set at_risk = h > 0 and (100 - (use | round(0) | int)) < spike %}
+          {%- if use >= 100 or (over >= 10 and el >= 10) %}over
+          {%- elif over > 2 or at_risk %}tight
+          {%- else %}ok{% endif %}
+          {%- endif %}
+        attributes:
+          # A heavy day = the busiest day in the last 7 (weekly points used,
+          # from sensor.claude_weekly_points_by_day), never less than 1.5x an
+          # average day (100/7 x 1.5 = 21). The floor is what applies until a
+          # week of days has been logged. Scaled to the time left, capped at one
+          # day: the question is "could one heavy stretch run it out", not "what
+          # if every remaining day were the worst one", which would paint every
+          # Monday yellow.
+          heavy_day: >
+            {%- set d = state_attr('sensor.claude_weekly_points_by_day', 'days') %}
+            {%- set cutoff = (now() - timedelta(days=7)).strftime('%Y-%m-%d') %}
+            {%- set seen = (d.items() | selectattr('0', 'gt', cutoff) | map(attribute='1') | list) if d is mapping else [] %}
+            {{ ([seen | max if seen else 0, 100 / 7 * 1.5] | max) | round(1) }}
+          spike_before_reset: >
+            {%- set d = state_attr('sensor.claude_weekly_points_by_day', 'days') %}
+            {%- set cutoff = (now() - timedelta(days=7)).strftime('%Y-%m-%d') %}
+            {%- set seen = (d.items() | selectattr('0', 'gt', cutoff) | map(attribute='1') | list) if d is mapping else [] %}
+            {%- set heavy = [seen | max if seen else 0, 100 / 7 * 1.5] | max %}
+            {%- set r = as_datetime(states('sensor.claude_plan_weekly_reset')) %}
+            {%- set h = ((as_timestamp(r) - as_timestamp(now())) / 3600) if r else 0 %}
+            {{ (heavy * ([[h, 24] | min, 0] | max) / 24) | round(1) }}
+          headroom: >
+            {%- set use = states('sensor.claude_plan_weekly_usage') | float(-1) %}
+            {{ (100 - (use | round(0) | int)) if use >= 0 else none }}
+          at_risk: >
+            {%- set d = state_attr('sensor.claude_weekly_points_by_day', 'days') %}
+            {%- set cutoff = (now() - timedelta(days=7)).strftime('%Y-%m-%d') %}
+            {%- set seen = (d.items() | selectattr('0', 'gt', cutoff) | map(attribute='1') | list) if d is mapping else [] %}
+            {%- set heavy = [seen | max if seen else 0, 100 / 7 * 1.5] | max %}
+            {%- set use = states('sensor.claude_plan_weekly_usage') | float(-1) %}
+            {%- set r = as_datetime(states('sensor.claude_plan_weekly_reset')) %}
+            {%- set h = ((as_timestamp(r) - as_timestamp(now())) / 3600) if r else 0 %}
+            {%- set spike = heavy * ([[h, 24] | min, 0] | max) / 24 %}
+            {{ use >= 0 and h > 0 and (100 - (use | round(0) | int)) < spike }}
+          projected_at_reset: >
+            {%- set use = states('sensor.claude_plan_weekly_usage') | float(-1) %}
+            {%- set r = as_datetime(states('sensor.claude_plan_weekly_reset')) %}
+            {%- set el = (100 * (1 - ((as_timestamp(r) - as_timestamp(now())) / (7 * 86400)))) if r else 0 %}
+            {{ (100 * use / el) | round(0) | int if use >= 0 and el > 0 else none }}
+
+  # Personal records, kept forever. A trigger-based template entity restores its
+  # state AND attributes across restarts, which is what lets a record outlive
+  # both HA and the session that set it. Each record is {value, label, at}.
+  # `cur` holds this minute's candidates; the attribute keeps whichever is
+  # larger, so a record only ever goes up. Every read of prior state uses
+  # .get(): under strict undefined, one missing key would take the entity
+  # unavailable, and the next render would start from an empty table.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+      - trigger: state
+        entity_id: sensor.claude_sessions_running
+    variables:
+      cur: >
+        {%- set today = now().strftime('%Y-%m-%d') %}
+        {%- set nowts = as_timestamp(now()) %}
+        {%- set ns = namespace(prompts=0, prs=[], ids=[], solo=0, solo_l='', solo_id='',
+                               wait=0, wait_l='', wait_id='') %}
+        {%- for s in states.sensor | selectattr('attributes.claude_session', 'defined') %}
+          {%- set a = s.attributes %}
+          {%- if a.get('day', '') == today %}
+            {%- set ns.prompts = ns.prompts + (a.get('prompts_today', 0) | int(0)) %}
+            {%- set ns.prs = ns.prs + ((a.get('prs_today') or []) | list) %}
+            {%- set ns.ids = ns.ids + [a.get('session_id', '')] %}
+          {%- endif %}
+          {%- set mins = ((nowts - as_timestamp(a.get('state_since'), nowts)) / 60) | int(0) %}
+          {%- set quiet = nowts - as_timestamp(a.get('last_seen'), 0) %}
+          {#- a solo run must still be talking: a laptop that slept mid-task
+              stays "working" forever, and would hold this record for good -#}
+          {%- if s.state == 'working' and quiet < 1200 and mins > ns.solo %}
+            {%- set ns.solo = mins %}{%- set ns.solo_l = a.get('label', '') %}
+            {%- set ns.solo_id = a.get('session_id', '') ~ '@' ~ a.get('state_since', '') %}
+          {%- elif s.state == 'needs_input' and mins > ns.wait %}
+            {%- set ns.wait = mins %}{%- set ns.wait_l = a.get('label', '') %}
+            {%- set ns.wait_id = a.get('session_id', '') ~ '@' ~ a.get('state_since', '') %}
+          {%- endif %}
+        {%- endfor %}
+        {%- set arch = state_attr('sensor.claude_archived_today', 'sessions') or [] %}
+        {%- if state_attr('sensor.claude_archived_today', 'day') == today %}
+          {%- for a in arch if a is mapping and a.get('session_id') not in ns.ids %}
+            {%- set ns.prompts = ns.prompts + (a.get('prompts_today', 0) | int(0)) %}
+            {%- set ns.prs = ns.prs + ((a.get('prs_today') or []) | list) %}
+          {%- endfor %}
+        {%- endif %}
+        {%- set prs = ns.prs | unique | sort | list %}
+        {#- `id` names the RUN a candidate belongs to: a day for the daily records,
+            one session in one stretch of one state for the durations. -#}
+        {{ {'concurrent': {'value': states('sensor.claude_sessions_running') | int(0), 'label': '', 'id': today},
+            'prs_day':    {'value': prs | count, 'label': prs | join(', '), 'id': today},
+            'prompts_day': {'value': ns.prompts, 'label': '', 'id': today},
+            'tokens_day': {'value': states('sensor.claude_tokens_today') | int(0), 'label': '', 'id': today},
+            'solo_run':   {'value': ns.solo, 'label': ns.solo_l, 'id': ns.solo_id},
+            'longest_wait': {'value': ns.wait, 'label': ns.wait_l, 'id': ns.wait_id}} }}
+    sensor:
+      - name: Claude fleet records
+        unique_id: claude_fleet_records
+        icon: mdi:trophy-outline
+        # how many records were set today (from the previous render; a minute behind)
+        state: >
+          {%- set prev = this.attributes.get('records', {}) %}
+          {%- set today = now().strftime('%Y-%m-%d') %}
+          {{ (prev.values() | select('mapping') | selectattr('at', 'defined')
+              | map(attribute='at') | select('match', today) | list | count)
+             if prev is mapping else 0 }}
+        attributes:
+          records: >
+            {%- set prev = this.attributes.get('records', {}) %}
+            {%- set prev = prev if prev is mapping else {} %}
+            {%- set ns = namespace(out={}) %}
+            {%- for k, c in cur.items() %}
+              {%- set p = prev.get(k) if prev.get(k) is mapping else {} %}
+              {%- if c.value > (p.get('value', 0) | int(0)) %}
+                {%- set ns.out = dict(ns.out, **{k: {'value': c.value, 'label': c.label,
+                                                     'id': c.id, 'at': now().isoformat()}}) %}
+              {%- elif p %}
+                {%- set ns.out = dict(ns.out, **{k: p}) %}
+              {%- endif %}
+            {%- endfor %}
+            {{ ns.out }}
+          # The last record to FALL: a different run or day overtaking a real one.
+          # A solo run in progress beats itself every minute, and a busy day beats
+          # its own prompt count with every prompt; comparing the run id is what
+          # makes those one event and not hundreds. A record held at zero is not
+          # beaten either, or the first day would announce all five at once.
+          last_broken: >
+            {%- set prev = this.attributes.get('records', {}) %}
+            {%- set prev = prev if prev is mapping else {} %}
+            {%- set ns = namespace(hit=none) %}
+            {%- for k, c in cur.items() if ns.hit is none %}
+              {%- set p = prev.get(k) if prev.get(k) is mapping else {} %}
+              {%- set pv = p.get('value', 0) | int(0) %}
+              {#- no id = saved before ids existed; its run is unknown, so it cannot
+                  be told apart from its own run growing. Stay quiet; the next
+                  overtake writes one. -#}
+              {%- if pv > 0 and c.value > pv and p.get('id') and p.get('id') != c.id %}
+                {%- set ns.hit = {'key': k, 'value': c.value, 'previous': pv,
+                                  'label': c.label, 'at': now().isoformat()} %}
+              {%- endif %}
+            {%- endfor %}
+            {%- set old = this.attributes.get('last_broken') %}
+            {{ ns.hit if ns.hit is not none else (old if old is mapping else none) }}
+
+# ---- "today" KPIs -----------------------------------------------------------
+sensor:
+  # hours today with at least one session waiting on you
+  - platform: history_stats
+    name: Claude waiting time today
+    unique_id: claude_waiting_time_today
+    entity_id: binary_sensor.claude_anyone_waiting
+    state: "on"
+    type: time
+    start: "{{ today_at('00:00') }}"
+    end: "{{ now() }}"
+  # session-minutes (area under the curve), for the working share
+  - platform: integration
+    name: Claude session minutes working
+    unique_id: claude_session_minutes_working
+    source: sensor.claude_sessions_working
+    method: left
+    unit_time: min
+    round: 1
+    max_sub_interval: { minutes: 1 }
+  - platform: integration
+    name: Claude session minutes running
+    unique_id: claude_session_minutes_running
+    source: sensor.claude_sessions_running
+    method: left
+    unit_time: min
+    round: 1
+    max_sub_interval: { minutes: 1 }
+
+utility_meter:
+  claude_working_minutes_today:
+    name: Claude working minutes today
+    source: sensor.claude_session_minutes_working
+    cycle: daily
+  claude_running_minutes_today:
+    name: Claude running minutes today
+    source: sensor.claude_session_minutes_running
+    cycle: daily
+
+automation:
+  # --------------------------------------------------- status light (a bulb)
+  # For a smart bulb. The AWTRIX desk display does the same job with its own
+  # corner indicator (claude_fleet_awtrix.yaml), in the same colours.
+  - id: claude_lamp_mirror
+    alias: "Claude · lamp mirrors fleet status"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id: sensor.claude_fleet_status
+      - trigger: state
+        entity_id: input_boolean.claude_lamp_enabled
+      - trigger: homeassistant
+        event: start
+    variables:
+      lamp: light.claude_lamp          # <<< STATUS LIGHT: your bulb's entity_id
+      status: "{{ states('sensor.claude_fleet_status') }}"
+      colors:
+        needs_input: [255, 140, 0]     # amber  — someone is blocked on you
+        stale:       [255, 0, 40]      # red    — a "working" session went quiet (per-Mac threshold)
+        working:     [40, 90, 255]     # blue   — busy, leave them be
+        idle:        [0, 200, 90]      # green  — all done, your move
+    conditions:
+      - condition: template             # no lamp yet? do nothing, quietly
+        value_template: "{{ states(lamp) not in ['unknown', 'unavailable'] }}"
+    actions:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >
+                  {{ is_state('input_boolean.claude_lamp_enabled', 'off')
+                     or status not in colors }}
+            sequence:
+              - action: light.turn_off
+                target: { entity_id: "{{ lamp }}" }
+        default:
+          - action: light.turn_on
+            target: { entity_id: "{{ lamp }}" }
+            data:
+              rgb_color: "{{ colors[status] }}"
+              brightness_pct: "{{ 100 if status in ['needs_input', 'stale'] else 35 }}"
+              transition: 1
+          - if:
+              - condition: template
+                value_template: "{{ status == 'needs_input' }}"
+            then:
+              - action: light.turn_on       # attention-grabbing blink, if the bulb supports it
+                continue_on_error: true
+                target: { entity_id: "{{ lamp }}" }
+                data: { flash: long }
+
+  # -------------------------------------------------------------- daily recap
+  - id: claude_recap_time_default
+    alias: "Claude · recap time default"
+    triggers:
+      - trigger: homeassistant
+        event: start
+    conditions:
+      - condition: state
+        entity_id: input_datetime.claude_recap_time
+        state: "00:00:00"
+    actions:
+      - action: input_datetime.set_datetime
+        target: { entity_id: input_datetime.claude_recap_time }
+        data: { time: "18:00:00" }
+
+  # Off: the Daily recap switch on the Setup tab (it switches this automation).
+  - id: claude_daily_recap
+    alias: "Claude · daily recap"
+    triggers:
+      - trigger: time
+        at: input_datetime.claude_recap_time
+    actions:
+      - variables:
+          today: "{{ now().strftime('%Y-%m-%d') }}"
+          sessions: >
+            {{ (states.sensor | selectattr('attributes.claude_session', 'defined')
+                | selectattr('attributes.day', 'eq', now().strftime('%Y-%m-%d'))
+                | list | count)
+               + (states('sensor.claude_archived_today') | int(0)
+                  if state_attr('sensor.claude_archived_today', 'day') == now().strftime('%Y-%m-%d') else 0) }}
+      - condition: template
+        value_template: "{{ sessions | int > 0 }}"
+      - action: persistent_notification.create
+        data:
+          notification_id: claude_daily_recap
+          title: "Claude recap · {{ now().strftime('%a %b %-d') }}"
+          message: |
+            {%- set live = states.sensor | selectattr('attributes.claude_session', 'defined')
+                 | selectattr('attributes.day', 'eq', today) | map(attribute='attributes') | list %}
+            {%- set live_ids = live | map(attribute='session_id') | list %}
+            {%- set arch = (state_attr('sensor.claude_archived_today', 'sessions') or [])
+                 if state_attr('sensor.claude_archived_today', 'day') == today else [] %}
+            {%- set ss = live + (arch | rejectattr('session_id', 'in', live_ids) | list) %}
+            {%- set ns = namespace(wait=0, prompts=0, prs=[]) %}
+            {%- for s in ss %}
+              {%- set ns.wait = ns.wait + (s.wait_minutes_today | int(0)) %}
+              {%- set ns.prompts = ns.prompts + (s.prompts_today | int(0)) %}
+              {%- set ns.prs = ns.prs + (s.prs_today | default([], true) | list) %}
+            {%- endfor %}
+            **{{ ss | count }} sessions · {{ ns.prompts }} prompts ·
+            {{ ns.prs | unique | list | count }} PRs · {{ ns.wait }} min waiting on you**
+
+            Peak {{ states('sensor.claude_peak_today') }} at the same time
+            {%- if state_attr('sensor.claude_peak_today', 'at') %} ({{ state_attr('sensor.claude_peak_today', 'at') }}){% endif %} ·
+            someone waiting on you for {{ (states('sensor.claude_waiting_time_today') | float(0) * 60) | round(0) | int }} min ·
+            {{ states('sensor.claude_working_share_today') }}% of session time spent working
+            {%- if states('sensor.claude_plan_session_usage') not in ['unknown','unavailable'] %}
+            
+            Plan: session limit peaked at {{ states('sensor.claude_plan_session_peak_today') }}% ·
+            weekly at {{ states('sensor.claude_plan_weekly_usage') }}%
+            {%- endif %}
+
+            {%- for s in ss | sort(attribute='wait_minutes_today', reverse=true) %}
+            - **{{ s.label }}** ({{ s.machine }}) —
+              {{ s.prompts_today }} prompt{{ "" if s.prompts_today | int(0) == 1 else "s" }}
+              {%- if s.prs_today %}, PRs {{ s.prs_today | join(', ') }}{% endif %}
+              {%- if s.wait_minutes_today | int(0) > 0 %}, waited {{ s.wait_minutes_today }} min{% endif %}
+            {%- endfor %}
+
+  # ------------------------------------------------- cleanup (every 5 min)
+  # Removes sessions that ENDED more than 30 min ago, and sessions not heard
+  # from in 24h (closed terminal, crash, laptop lid shut...). Each one's daily
+  # counters are archived first, so the recap still includes it.
+  - id: claude_nightly_cleanup          # id kept from the original 3am version
+    alias: "Claude · remove ended/abandoned sessions"
+    mode: single
+    triggers:
+      # /5, not /15: the grace below is a FLOOR, and the sweep interval adds to it.
+      # At /15 a 10-minute grace really meant 10-25 minutes depending on when the
+      # session happened to end, which is not what the number says.
+      - trigger: time_pattern
+        minutes: "/5"
+    variables:
+      # 10, not 30: /clear ends one session and starts another instantly, so the
+      # ghost sits next to its replacement on the same machine and reads like two
+      # live sessions. Long enough to see a clean exit, short enough not to linger.
+      ended_grace_min: 10                # <<< how long an ended session stays visible
+      abandoned_silent_hours: 2          # <<< a non-working session this quiet is gone
+      silent_max_hours: 24               # <<< backstop: anything this quiet, any state
+    actions:
+      - repeat:
+          for_each: >
+            {% set ns = namespace(out=[]) %}
+            {% for s in states.sensor | selectattr('attributes.claude_session', 'defined') %}
+              {% set a = s.attributes %}
+              {% set silent = as_timestamp(now()) - as_timestamp(a.last_seen, 0) %}
+              {% set ended_for = as_timestamp(now()) - as_timestamp(a.state_since, 0) %}
+              {# killed without a SessionEnd (app quit, crash, closed lid) never
+                 reaches 'ended', so it would otherwise sit here for a full day #}
+              {% if (s.state == 'ended' and ended_for > ended_grace_min * 60)
+                    or (s.state != 'working' and silent > abandoned_silent_hours * 3600)
+                    or silent > silent_max_hours * 3600 %}
+                {% set ns.out = ns.out + [{'disc': a.discovery_topic, 'base': a.topic_base,
+                    'session_id': a.session_id, 'label': a.label, 'machine': a.machine,
+                    'prompts_today': a.prompts_today | int(0),
+                    'prs_today': a.prs_today | default([], true) | list,
+                    'wait_minutes_today': a.wait_minutes_today | int(0), 'day': a.day,
+                    'tokens_today': a.get('tokens_today') if a.get('tokens_today') is mapping else {},
+                    'compactions_today': a.get('compactions_today', 0) | int(0),
+                    'auto_compactions_today': a.get('auto_compactions_today', 0) | int(0)}] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.out }}
+          sequence:
+            - event: claude_session_archived
+              event_data:
+                session_id: "{{ repeat.item.session_id }}"
+                label: "{{ repeat.item.label }}"
+                machine: "{{ repeat.item.machine }}"
+                prompts_today: "{{ repeat.item.prompts_today }}"
+                prs_today: "{{ repeat.item.prs_today }}"
+                wait_minutes_today: "{{ repeat.item.wait_minutes_today }}"
+                tokens_today: "{{ repeat.item.tokens_today }}"
+                compactions_today: "{{ repeat.item.compactions_today }}"
+                auto_compactions_today: "{{ repeat.item.auto_compactions_today }}"
+                day: "{{ repeat.item.day }}"
+            # Discovery FIRST, so the entity is gone before its topics empty. The
+            # other way round, the still-live entity receives an empty attributes
+            # message and HA logs "Erroneous JSON" for every session cleaned up.
+            - action: mqtt.publish
+              data: { topic: "{{ repeat.item.disc }}", payload: "", retain: true }
+            - action: mqtt.publish
+              data: { topic: "{{ repeat.item.base }}/attrs", payload: "", retain: true }
+            - action: mqtt.publish
+              data: { topic: "{{ repeat.item.base }}/state", payload: "", retain: true }

@@ -1,0 +1,4 @@
+# The real env file holds the MQTT password. Only the .example belongs here.
+ha-status.env
+*.bak-*
+.DS_Store

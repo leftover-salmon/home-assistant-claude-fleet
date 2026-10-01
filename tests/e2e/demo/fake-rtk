@@ -1,0 +1,10 @@
+#!/bin/bash
+# A stand-in `rtk` for hosts without RTK. The hook only asks it for its version,
+# and takes its presence to mean "RTK is installed on this computer". The ledger
+# it reads is a file scenario.sh writes into each fake home. Where a real rtk is
+# in /opt/homebrew/bin or /usr/local/bin, the hook's own PATH finds that one
+# first, which is harmless: it is only asked for --version.
+case "${1:-}" in
+  --version|-V) echo "rtk 0.39.0" ;;
+  *) echo "fake rtk: only --version is supported" >&2; exit 1 ;;
+esac

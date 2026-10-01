@@ -1,0 +1,33 @@
+# Example author script for the fleet aside (packages/claude_fleet_quip.yaml).
+# Copy into your own packages/ folder. The aside finds it by its name,
+# script.claude_fleet_aside_author, and prefers it over a conversation agent.
+#
+# The contract: receive `prompt`, return {"text": "<one line>"}.
+#
+# This one uses Home Assistant's AI Task (ai_task.generate_data), which asks an
+# LLM for a one-off result without a conversation, so nothing accumulates in any
+# assistant's memory. It uses your default AI Task entity; add `entity_id:` under
+# `data:` to pick another.
+#
+# Not tested on the author's install, which has no AI Task entity. The version
+# that runs there wraps a custom assistant's "answer outside the conversation"
+# action in exactly this shape: same field, same stop/response_variable.
+script:
+  claude_fleet_aside_author:
+    alias: "Claude · fleet aside author"
+    mode: queued
+    fields:
+      prompt:
+        description: What the aside wants written.
+        required: true
+        selector: { text: { multiline: true } }
+    sequence:
+      - action: ai_task.generate_data
+        data:
+          task_name: claude_fleet_aside
+          instructions: "{{ prompt }}"
+        response_variable: result
+      - variables:
+          out: "{{ {'text': (result.get('data', '') if result is mapping else '') | string} }}"
+      - stop: done
+        response_variable: out

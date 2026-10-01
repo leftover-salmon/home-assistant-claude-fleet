@@ -1,0 +1,59 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "claude-fleet",
+  "version": "0.1.12",
+  "description": "Report every Claude Code session to Home Assistant over MQTT: live status, tokens, plan limits and RTK savings on a wall dashboard.",
+  "author": {
+    "name": "leftover-salmon"
+  },
+  "homepage": "https://github.com/leftover-salmon/home-assistant-claude-fleet",
+  "license": "MIT",
+  "keywords": [
+    "home-assistant",
+    "mqtt",
+    "dashboard",
+    "sessions"
+  ],
+  "userConfig": {
+    "mqtt_host": {
+      "type": "string",
+      "title": "MQTT broker host",
+      "description": "The broker Home Assistant uses, e.g. homeassistant.local",
+      "default": "homeassistant.local"
+    },
+    "mqtt_port": {
+      "type": "number",
+      "title": "MQTT broker port",
+      "default": 1883,
+      "description": "1883 unless you changed it"
+    },
+    "mqtt_user": {
+      "type": "string",
+      "title": "MQTT user",
+      "description": "A broker login for your computers"
+    },
+    "mqtt_password": {
+      "type": "string",
+      "title": "MQTT password",
+      "sensitive": true,
+      "description": "That user's password. Stored as a sensitive value, not in a plain-text file"
+    },
+    "machine_name": {
+      "type": "string",
+      "title": "This computer's name on the dashboard",
+      "description": "Must be different on each computer. Blank uses the computer's own name."
+    },
+    "stale_minutes": {
+      "type": "number",
+      "title": "Minutes of silence before a working session shows as stale",
+      "description": "20 on an always-on machine; 0 on a laptop, where a closed lid is not a stuck session",
+      "default": 20
+    },
+    "summaries": {
+      "type": "boolean",
+      "title": "One-line 'working on' summaries",
+      "description": "Sends the tail of each session's transcript to Haiku (via claude -p) every ~10 minutes and publishes a one-line summary",
+      "default": true
+    }
+  }
+}

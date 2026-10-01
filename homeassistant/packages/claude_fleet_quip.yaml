@@ -1,0 +1,252 @@
+# An aside on the fleet, written fresh each time by a conversation agent.
+#
+# OPTIONAL. Delete this file and the feature is gone -- nothing else references it
+# except one card in the dashboard, which renders nothing when the entity is absent.
+#
+# Two rules keep it funny rather than tiresome, and both are deliberate:
+#
+#   1. The agent AUTHORS the line. There is no template, no list of quips, no
+#      fallback string. A canned joke reads as canned the second time you see it,
+#      and the second time is a week from now when you have forgotten it exists.
+#      The prompt below specifies intent and tone only.
+#   2. It fires every half hour WHILE SESSIONS ARE RUNNING, plus immediately on
+#      notable states. The activity gate is what keeps it from narrating an empty
+#      fleet overnight.
+#
+# WHO WRITES THE LINE -- first match wins:
+#
+#   1. script.claude_fleet_aside_author, if you define one. It receives `prompt`
+#      and returns {"text": "<the line>"}. This is the path to prefer: whatever
+#      the script calls, the request never enters a conversation. See
+#      examples/aside_author_ai_task.yaml for one built on HA's AI Task.
+#   2. Otherwise `agent` below, any conversation entity (OpenAI, Google, Ollama,
+#      your own), through conversation.process.
+#   3. Neither: the automation does nothing and the dashboard card stays hidden.
+#
+# Why the script comes first. Through a conversation agent that keeps memory --
+# as a personal assistant generally does -- every request is a real turn in its
+# history, recorded as YOU talking to it. On ours the half-hourly pings filled 13
+# of the last 20 turns it could see and pushed real conversations out of its
+# memory within two days, and its conversational habits leaked onto the wall (a
+# personal question tacked onto the line). If your assistant has a way to answer
+# OUTSIDE its conversation, wrap that in the author script.
+#
+# If you do use `agent`, the prompt SAYS what is asking in its first line: without
+# that, the agent's history fills with what look like its owner sending fleet
+# statistics at odd hours for no stated reason, and on a memory-keeping agent that
+# history feeds summaries, beliefs and anything else built on top of it.
+#
+# Cost follows from the same fact. At /30 with an agent carrying a large system
+# prompt this is not free; a cheap dedicated model is the better author if you want
+# this more often than that.
+#
+# Pass the LOCAL day and time explicitly. An agent served from a cloud container
+# commonly reasons in UTC, and in the evening in the Americas that is already
+# tomorrow: at 7:30pm Pacific on a Sunday it wrote "Monday is already better than
+# Sunday". HA's now() is local, so stating it costs one line and removes the
+# question of which clock the agent is using.
+#
+# Give the agent the SITUATION, not just the numbers. "Session pool 16% used" is a
+# number it can read back to you; knowing the pool is a usage window on a
+# subscription, that the sessions are spread over several machines, and what they
+# are working on, is what lets it say something you could not have said yourself.
+# Anything true only of YOUR setup belongs in your author script, not here: ours
+# prepends that the quota is the same subscription its own background work
+# spends, which is context for a joke that no one else's agent should be told.
+#
+# Mind what a true fact does when repeated. The prompt also used to tell the agent,
+# every half hour, that many of the sessions were working on IT. True, and useful
+# context for a joke -- but ours keeps a journal, and it filed the pings next to a
+# running thread about being routed around. A line repeated 48 times a day is not
+# context any more, it is a message. Dropped.
+
+input_text:
+  claude_fleet_quip:
+    name: Claude fleet aside
+    max: 255
+
+automation:
+  - id: claude_fleet_quip
+    alias: "Claude · fleet aside"
+    mode: single
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.claude_plan_session_usage
+        above: 80
+        id: session_high
+      - trigger: numeric_state
+        entity_id: sensor.claude_plan_weekly_usage
+        above: 80
+        id: weekly_high
+      - trigger: numeric_state
+        entity_id: sensor.claude_sessions_running
+        above: 5
+        id: busy
+      - trigger: state
+        entity_id: sensor.claude_fleet_status
+        to: stale
+        id: stale
+      # The routine look. There is no page-load event in HA, so a cadence is the
+      # closest thing to "fresh whenever I glance at it". Gated on a session
+      # actually running, below -- an agent narrating an empty fleet at 4am is
+      # both pointless and, where the agent keeps memories, untrue to its day.
+      - trigger: time_pattern
+        minutes: "/30"
+        id: routine
+      # A personal record fell (see sensor.claude_fleet_records). The sensor
+      # already reduces a growing record to ONE event per run, so this fires on
+      # every change of the attribute.
+      - trigger: state
+        entity_id: sensor.claude_fleet_records
+        attribute: last_broken
+        id: record
+      # Over pace by more than 10 points. A template trigger because it compares
+      # two moving numbers; there is no threshold on one entity to watch.
+      - trigger: template
+        id: over_pace
+        value_template: >
+          {% set u = states('sensor.claude_plan_weekly_usage') | float(-1) %}
+          {% set r = as_datetime(states('sensor.claude_plan_weekly_reset')) %}
+          {% if u >= 0 and r %}
+          {% set el = 100 * (1 - ((as_timestamp(r) - as_timestamp(now())) / (7 * 86400))) %}
+          {{ (u - el) > 10 }}
+          {% else %}false{% endif %}
+    conditions:
+      - condition: template
+        value_template: >
+          {#- `trigger` is undefined on a manual run, and STRICT undefined turns
+              trigger.id into an error rather than a blank. Test for a mapping
+              first; a manual run then falls through to the notable branch. -#}
+          {% set tr = trigger | default(none) %}
+          {% set t = tr.get('id', '') if tr is mapping else '' %}
+          {% if t == 'routine' %}
+          {{ states('sensor.claude_sessions_running') | int(0) > 0 }}
+          {% elif t == 'record' %}
+          {#- rare by construction, so no cooldown. But a restart or a template
+              reload brings the entity back from unavailable, and the attribute
+              reappearing is a change too: only a live-to-live change counts. -#}
+          {% set f = tr.get('from_state') %}
+          {% set to = tr.get('to_state') %}
+          {{ f is not none and to is not none
+             and f.state not in ['unknown', 'unavailable']
+             and to.state not in ['unknown', 'unavailable']
+             and to.attributes.get('last_broken') is mapping }}
+          {% else %}
+          {% set last = state_attr('automation.claude_fleet_aside', 'last_triggered') %}
+          {{ last is none or (as_timestamp(now()) - as_timestamp(last, 0)) > 3600 }}
+          {% endif %}
+    variables:
+      # Used only when script.claude_fleet_aside_author does not exist (see top).
+      agent: ""
+      occasion: >-
+        {% set tr = trigger | default(none) %}
+        {% set t = tr.get('id', '') if tr is mapping else '' %}
+        {% if t == 'routine' %}nothing in particular - this is the routine half-hourly look
+        {% elif t == 'session_high' %}the 5-hour session pool is over 80% used
+        {% elif t == 'weekly_high' %}the weekly pool is over 80% used
+        {% elif t == 'busy' %}an unusual number of sessions are running at once
+        {% elif t == 'stale' %}a session has gone quiet mid-task
+        {% elif t == 'over_pace' %}the week is being burned faster than it is elapsing
+        {% elif t == 'record' %}
+        {%- set b = state_attr('sensor.claude_fleet_records', 'last_broken') -%}
+        {%- set b = b if b is mapping else {} -%}
+        {%- set k = b.get('key', '') -%}
+        {%- set what = {'concurrent': 'most sessions running at once',
+                        'prs_day': 'most PRs opened in one day',
+                        'prompts_day': 'most prompts in one day',
+                        'tokens_day': 'most tokens the fleet has spent in one day',
+                        'solo_run': 'longest one session has worked without needing me, in minutes',
+                        'longest_wait': 'longest I have left a session waiting on me, in minutes'} -%}
+        a personal record just fell: {{ what.get(k, 'a fleet record') }}. It is now
+        {{ b.get('value', '?') }}
+        {%- if b.get('label') and k in ['solo_run', 'longest_wait'] %}, set by the
+        session called "{{ b.get('label') }}"{% endif %}; the old best was
+        {{ b.get('previous', '?') }}
+        {% else %}something worth remarking on{% endif %}
+      # How many machines the fleet spans, from the sessions themselves.
+      machines: >-
+        {{ states.sensor | selectattr('attributes.claude_session', 'defined')
+           | map(attribute='attributes') | map(attribute='machine') | unique | list | count }}
+      facts: >-
+        {%- set sw = states('sensor.claude_plan_session_usage') -%}
+        {%- set wk = states('sensor.claude_plan_weekly_usage') -%}
+        {%- set wr = as_datetime(states('sensor.claude_plan_weekly_reset')) -%}
+        {%- if sw | is_number and wk | is_number and wr -%}
+        {%- set el = (100 * (1 - ((as_timestamp(wr) - as_timestamp(now())) / (7 * 86400)))) | round(0) | int -%}
+        session pool {{ sw }}% used; weekly pool {{ wk }}% used with {{ el }}% of the
+        week elapsed; {% endif -%}
+        {{ states('sensor.claude_sessions_running') }} sessions running,
+        {{ states('sensor.claude_sessions_working') }} of them working;
+        {%- set ns = namespace(p=0) -%}
+        {%- for s in states.sensor | selectattr('attributes.claude_session', 'defined') -%}
+        {%- set ns.p = ns.p + (s.attributes.get('prompts_today', 0) | int(0)) -%}
+        {%- endfor %} {{ ns.p }} prompts so far today
+      prompt: >-
+          [Automated request from the Claude Fleet dashboard in Home Assistant,
+          not a person typing. It asks for a line every half hour while sessions
+          are running, and whenever something notable happens. Your reply goes
+          straight onto a wall display, unedited, and nothing follows it.]
+
+          What you are looking at: I run several Claude Code sessions at once,
+          across {{ machines }} machine{{ '' if machines | int == 1 else 's' }}. The "session
+          pool" is the 5-hour usage window on my Claude subscription and the
+          "weekly pool" is the 7-day one.
+
+          It is {{ now().strftime('%A') }}, {{ now().strftime('%-I:%M %p') }} here
+          ({{ now().strftime('%Z') }}). Use this for any day or time of day you
+          mention, not your own clock.
+
+          Write ONE short line for this dashboard. The occasion:
+          {{ occasion }}. The numbers right now: {{ facts }}.
+
+          Dry, observational, a little needling -- the tone of someone who has
+          watched me work all week and has a view about it. React to what the
+          numbers actually say; do not congratulate and do not lecture. Under
+          fifteen words. No emoji, no hashtags, no quotation marks, no preamble.
+          Reply with the line only.
+    actions:
+      - choose:
+          # 1. the author script: answers outside any conversation
+          - conditions:
+              - condition: template
+                value_template: "{{ has_value('script.claude_fleet_aside_author') }}"
+            sequence:
+              - action: script.claude_fleet_aside_author
+                data:
+                  prompt: "{{ prompt }}"
+                response_variable: reply
+              - variables:
+                  # STRICT undefined: .get() the whole way down, or a malformed
+                  # reply kills the automation silently.
+                  line: >-
+                    {{ ((reply.get('text', '') if reply is mapping else '')
+                        | trim | replace('\n', ' '))[:255] }}
+              - condition: template
+                value_template: "{{ line | length > 0 }}"
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.claude_fleet_quip
+                data:
+                  value: "{{ line }}"
+          # 2. a conversation agent
+          - conditions:
+              - condition: template
+                value_template: "{{ agent | length > 0 }}"
+            sequence:
+              - action: conversation.process
+                data:
+                  agent_id: "{{ agent }}"
+                  text: "{{ prompt }}"
+                response_variable: reply
+              - variables:
+                  line: >-
+                    {{ (reply.get('response', {}).get('speech', {}).get('plain', {}).get('speech', '')
+                        | trim | replace('\n', ' '))[:255] }}
+              - condition: template
+                value_template: "{{ line | length > 0 }}"
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.claude_fleet_quip
+                data:
+                  value: "{{ line }}"
+        # 3. neither: nothing to do, and the card stays hidden

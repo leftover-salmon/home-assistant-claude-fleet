@@ -1,0 +1,93 @@
+# End-to-end test: a throwaway Home Assistant and Mosquitto in Docker, Claude
+# Fleet installed the README's way, six invented sessions through the real hook,
+# then tests/e2e/check.py. The same phases run locally with tests/e2e/run.sh.
+name: e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      ha:
+        description: "Home Assistant: the version pinned in tests/e2e/demo/lib.sh, or a moving tag"
+        type: choice
+        options: [pinned, stable, beta]
+        default: pinned
+  push:
+    branches: [main]
+    paths: ["homeassistant/**", "hooks/**", "install.sh", "scripts/**", "tests/e2e/**", ".github/workflows/e2e.yml"]
+  pull_request:
+    paths: ["homeassistant/**", "hooks/**", "install.sh", "scripts/**", "tests/e2e/**", ".github/workflows/e2e.yml"]
+  # weekly, against HA stable and beta: a new release breaking the templates
+  # should show up here before it shows up for users
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: e2e (HA ${{ matrix.ha }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The pinned version on every push, PR and manual run; stable and beta
+        # on the weekly schedule.
+        ha: ${{ fromJSON(github.event_name == 'schedule' && '["stable","beta"]' || format('["{0}"]', inputs.ha || 'pinned')) }}
+    env:
+      # empty = the version pinned in lib.sh
+      CF_DEMO_HA_IMAGE: ${{ matrix.ha != 'pinned' && format('ghcr.io/home-assistant/home-assistant:{0}', matrix.ha) || '' }}
+      CF_E2E_OUT: ${{ github.workspace }}/tests/e2e/out
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools the demo and the hook need
+        run: |
+          echo "CF_DEMO_DIR=$RUNNER_TEMP/cf-e2e" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends mosquitto-clients jq sqlite3
+
+      - name: Self-test (every check must be able to fail)
+        run: tests/e2e/run.sh selftest
+
+      - name: Home Assistant and Mosquitto, Claude Fleet installed
+        run: tests/e2e/run.sh up
+
+      - name: Scenario (fast)
+        run: tests/e2e/run.sh scenario
+
+      - name: Checks
+        run: tests/e2e/run.sh check
+
+      - name: Screenshots
+        if: success()
+        run: tests/e2e/run.sh shots
+
+      - name: Upload screenshots
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-ha-${{ matrix.ha }}
+          path: tests/e2e/demo/out/
+          retention-days: 14
+
+      - name: Collect logs
+        if: failure()
+        run: tests/e2e/run.sh logs
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-ha-${{ matrix.ha }}
+          path: tests/e2e/out/
+          retention-days: 14
+
+      - name: Tear down
+        if: always()
+        run: tests/e2e/run.sh down

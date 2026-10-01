@@ -1,0 +1,199 @@
+# The fleet on an AWTRIX NG pixel clock (e.g. Ulanzi TC001): a corner light in
+# the fleet's colour, and a notification naming a session when it needs you.
+#
+# OPTIONAL. Delete this file and the feature is gone. Nothing to configure: it
+# finds the clock by itself -- the first device Home Assistant knows with model
+# "AWTRIX NG" -- and reads that clock's MQTT prefix from its own sensor. With no
+# such clock it does nothing.
+#
+# Talks to the clock over MQTT directly (<prefix>/cmd/...), not through the
+# light entities its discovery creates: the command topics carry blink and fade,
+# named notifications, and a dismiss-by-name, and none of those exist on a light.
+#
+# Two choices worth keeping:
+#
+#   - The corner light is RETAINED. A clock that reboots, or reconnects after a
+#     Wi-Fi drop, gets the current colour back from the broker without waiting
+#     for the fleet to change state. Notifications are NOT retained -- a
+#     reconnect must never replay "X needs you" for something long answered.
+#   - A notification is NAMED after its session and withdrawn when that session
+#     stops waiting. Answer it before the clock gets round to it (they queue)
+#     and it never scrolls past at all. The light carries the lasting signal;
+#     the text says who.
+
+input_boolean:
+  claude_fleet_desk_display:
+    name: Claude desk display
+    icon: mdi:dots-grid
+
+template:
+  - sensor:
+      # the clock's MQTT prefix, found rather than configured
+      - name: Claude fleet AWTRIX prefix
+        unique_id: claude_fleet_awtrix_prefix
+        icon: mdi:dots-grid
+        state: >
+          {%- set ns = namespace(p='') %}
+          {%- for s in states.sensor if ns.p == '' and s.entity_id.endswith('_mqtt_prefix') %}
+            {%- if device_attr(s.entity_id, 'model') == 'AWTRIX NG'
+                   and s.state not in ['unknown', 'unavailable', ''] %}
+              {%- set ns.p = s.state %}
+            {%- endif %}
+          {%- endfor %}
+          {{ ns.p if ns.p else none }}
+
+automation:
+  # ------------------------------------------------------- the corner light
+  - id: claude_fleet_awtrix_indicator
+    alias: "Claude · desk display colour"
+    mode: queued
+    triggers:
+      # to: null = the state itself changed, not one of its attributes: the
+      # status sensor's counts change constantly and each was a republish
+      - trigger: state
+        entity_id: sensor.claude_fleet_status
+        to: ~
+      - trigger: state
+        entity_id: input_boolean.claude_fleet_desk_display
+      - trigger: state
+        entity_id: sensor.claude_fleet_awtrix_prefix
+      - trigger: homeassistant
+        event: start
+    variables:
+      prefix: "{{ states('sensor.claude_fleet_awtrix_prefix') }}"
+      status: "{{ states('sensor.claude_fleet_status') }}"
+      # Same palette as the lamp. Amber blinks and red breathes, because those
+      # two ask something of you; blue and green hold still.
+      looks:
+        needs_input: { color: "#FF8C00", blinkMs: 700 }
+        stale:       { color: "#FF0028", fadeMs: 1500 }
+        working:     { color: "#285AFF" }
+        idle:        { color: "#00C85A" }
+    conditions:
+      - condition: template
+        value_template: "{{ prefix not in ['unknown', 'unavailable', 'none', ''] }}"
+    actions:
+      - action: mqtt.publish
+        data:
+          topic: "{{ prefix }}/cmd/indicators/1"
+          retain: true
+          # off, or nothing running: {} turns the indicator off
+          payload: >
+            {{ (looks[status] if is_state('input_boolean.claude_fleet_desk_display', 'on')
+                                 and status in looks else {}) | to_json }}
+
+  # ------------------------------------------------- who needs you, by name
+  - id: claude_fleet_awtrix_needs_you
+    alias: "Claude · desk display: who needs you"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: sensor.claude_fleet_status
+        attribute: waiting_on
+    variables:
+      prefix: "{{ states('sensor.claude_fleet_awtrix_prefix') }}"
+      before: >
+        {{ (trigger.from_state.attributes.get('waiting_on') or [])
+           if trigger.from_state is not none else [] }}
+      after: "{{ trigger.to_state.attributes.get('waiting_on') or [] }}"
+    conditions:
+      - condition: template
+        value_template: "{{ prefix not in ['unknown', 'unavailable', 'none', ''] }}"
+      # A restart or reload brings the attribute back from nothing, and that is
+      # a change too: only a live-to-live change is somebody new waiting.
+      - condition: template
+        value_template: >
+          {{ trigger.from_state is not none
+             and trigger.from_state.state not in ['unknown', 'unavailable']
+             and trigger.to_state.state not in ['unknown', 'unavailable'] }}
+    actions:
+      # answered: withdraw its notification, wherever it is in the queue
+      - repeat:
+          for_each: "{{ before | reject('in', after) | list }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: "{{ prefix }}/cmd/notify/dismiss/fleet-{{ repeat.item | slugify }}"
+                payload: ""
+      # newly waiting: say who
+      - if:
+          - condition: state
+            entity_id: input_boolean.claude_fleet_desk_display
+            state: "on"
+        then:
+          - repeat:
+              for_each: "{{ after | reject('in', before) | list }}"
+              sequence:
+                - action: mqtt.publish
+                  data:
+                    topic: "{{ prefix }}/cmd/notify"
+                    payload: >
+                      {{ {'name': 'fleet-' ~ (repeat.item | slugify),
+                          'text': repeat.item ~ ' needs you',
+                          'textColor': '#FF8C00',
+                          'repeat': 2,
+                          'stack': true} | to_json }}
+
+  # ------------------------------------------ screens in the clock's rotation
+  # Pushed apps, shown in turn with the clock's own time and date. Each carries a
+  # lifetime and is refreshed well inside it, so if Home Assistant stops, the
+  # screens expire instead of showing numbers frozen at the moment it did. They
+  # are not retained for the same reason: the broker would hand a rebooted clock
+  # whatever was last true.
+  - id: claude_fleet_awtrix_screens
+    alias: "Claude · desk display screens"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id:
+          - sensor.claude_plan_session_usage
+          - sensor.claude_plan_weekly_usage
+          - sensor.claude_session_pace
+          - sensor.claude_weekly_pace
+          - input_boolean.claude_fleet_desk_display
+          - sensor.claude_fleet_awtrix_prefix
+      - trigger: time_pattern
+        minutes: "/10"
+      - trigger: homeassistant
+        event: start
+    variables:
+      prefix: "{{ states('sensor.claude_fleet_awtrix_prefix') }}"
+      # NOT `on:` -- YAML reads a bare on as boolean true, the key stops being a
+      # string, and HA rejects the whole automation at load with a schema error.
+      display_on: "{{ is_state('input_boolean.claude_fleet_desk_display', 'on') }}"
+      pace_colour:
+        ok: "#00C85A"
+        tight: "#FF8C00"
+        over: "#FF0028"
+      life: 1800000   # 30 min, against a 10-minute refresh
+      screens: >
+        {%- set out = {} %}
+        {%- set su = states('sensor.claude_plan_session_usage') %}
+        {%- set wu = states('sensor.claude_plan_weekly_usage') %}
+        {%- if su | is_number %}
+          {%- set c = pace_colour.get(states('sensor.claude_session_pace'), '#FFFFFF') %}
+          {%- set out = dict(out, fleet_session={'text': '5H ' ~ (su | float | round(0) | int) ~ '%',
+               'textColor': c, 'progress': su | float | round(0) | int, 'progressColor': c,
+               'lifetimeMs': life}) %}
+        {%- endif %}
+        {%- if wu | is_number %}
+          {%- set c = pace_colour.get(states('sensor.claude_weekly_pace'), '#FFFFFF') %}
+          {%- set out = dict(out, fleet_weekly={'text': 'WK ' ~ (wu | float | round(0) | int) ~ '%',
+               'textColor': c, 'progress': wu | float | round(0) | int, 'progressColor': c,
+               'lifetimeMs': life}) %}
+        {%- endif %}
+        {{ out }}
+    conditions:
+      - condition: template
+        value_template: "{{ prefix not in ['unknown', 'unavailable', 'none', ''] }}"
+    actions:
+      - repeat:
+          for_each: [fleet_session, fleet_weekly]
+          sequence:
+            # a screen with nothing to say, or the display switched off, is
+            # DELETED (empty payload) rather than left to expire
+            - action: mqtt.publish
+              data:
+                topic: "{{ prefix }}/cmd/apps/pushed/{{ repeat.item }}"
+                payload: >
+                  {{ (screens[repeat.item] | to_json) if display_on and repeat.item in screens else '' }}

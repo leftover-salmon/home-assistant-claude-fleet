@@ -1,0 +1,1312 @@
+title: Claude Fleet
+views:
+  - title: Sessions
+    path: sessions
+    icon: mdi:robot-outline
+    type: sections
+    # A sections view lays itself out in fixed-width columns, so it stays narrow on
+    # a wide display no matter what the cards ask for. max_columns caps how many
+    # such columns the view may use; column_span is how many this single section
+    # occupies. They must match, or the section is capped below the view's width.
+    max_columns: 4
+    sections:
+      - type: grid
+        column_span: 4
+        cards:
+          # ------------------------------------------------------ setup banner
+          # Only while something REQUIRED is missing (no session has reported, or a
+          # Mac is on an old hook). The full checklist is the Setup tab.
+          - type: markdown
+            grid_options: { columns: full }
+            text_only: true
+            visibility:
+              - condition: state
+                entity: binary_sensor.claude_fleet_setup_needed
+                state: "on"
+            content: |
+              {%- set ss = states.sensor | selectattr('attributes.claude_session', 'defined') | list %}
+              {%- if ss | count == 0 %}
+              <ha-alert alert-type="warning" title="No sessions have reported yet"><a href="setup">Setup</a> says what to do next.</ha-alert>
+              {%- else %}
+              <ha-alert alert-type="warning" title="A Mac is running an out-of-date hook">Its sessions report without tokens, compactions or RTK. <a href="setup">Setup</a> says which one and what to run.</ha-alert>
+              {%- endif %}
+
+          # -------------------------------------------------- plan source banner
+          # The plan integration stopped reporting. Without this the gauges would
+          # go on showing the last numbers as if they were current.
+          - type: markdown
+            grid_options: { columns: full }
+            text_only: true
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_source
+                state: ["stale", "unavailable"]
+            content: |
+              {%- set st = states('sensor.claude_plan_source') %}
+              {%- set m = state_attr('sensor.claude_plan_source', 'minutes_since_report') %}
+              {%- if st == 'unavailable' %}
+              <ha-alert alert-type="warning" title="Plan limits are unavailable">The plan-usage integration isn't reporting, so the plan figures here may be out of date. It most often needs you to sign in again: Settings → Devices & services.</ha-alert>
+              {%- else %}
+              <ha-alert alert-type="warning" title="Plan limits last reported {{ m }} minutes ago">The plan-usage integration has stopped updating, so the plan figures here are that old. Check it under Settings → Devices & services.</ha-alert>
+              {%- endif %}
+
+          # ---------------------------------------------------------- headline
+          - type: markdown
+            grid_options: { columns: full }
+            text_only: true
+            content: |
+              {#- counts come from the fleet-status attributes; note they count a
+                  stale session as working, which is why 'stale' has its own branch -#}
+              {%- set st = states('sensor.claude_fleet_status') %}
+              {%- set f = 'sensor.claude_fleet_status' %}
+              {%- set w = state_attr(f, 'working') | int(0) %}
+              {%- set n = state_attr(f, 'needs_input') | int(0) %}
+              {%- set i = state_attr(f, 'idle') | int(0) %}
+              {%- set names = state_attr(f, 'waiting_on') or [] %}
+              {%- set tail = [] %}
+              {%- if w %}{% set tail = tail + [w ~ ' working'] %}{% endif %}
+              {%- if i %}{% set tail = tail + [i ~ ' idle, your move when ready'] %}{% endif %}
+              {%- if st == 'needs_input' %}
+              # 🟠 {{ n }} waiting on you
+              {{ names | join(' · ') }}{{ ('  \n' ~ tail | join(' · ')) if tail else '' }}
+              {%- elif st == 'stale' %}
+              # 🔴 A session has gone quiet
+              {{ tail | join(' · ') if tail else 'Check the red row below' }}
+              {%- elif st == 'working' %}
+              # 🔵 {{ w }} working · nothing needs you
+              {%- if i %}
+              {{ i }} idle, your move when you're ready
+              {%- endif %}
+              {%- elif st == 'idle' %}
+              # 🟢 {{ i }} idle · your move
+              Nothing working, nothing blocked
+              {%- else %}
+              # ⚫ No sessions running
+              {%- endif %}
+
+          # ------------------------------------------------------- fleet aside
+          # Optional: rendered only when packages/claude_fleet_quip.yaml is installed
+          # AND has something to say. `visibility` hides the whole card otherwise --
+          # an empty markdown card still draws its box, which would leave a blank
+          # panel sitting on the dashboard most of the time.
+          - type: markdown
+            grid_options: { columns: full }
+            visibility:
+              - condition: state
+                entity: input_text.claude_fleet_quip
+                state_not: ""
+              - condition: state
+                entity: input_text.claude_fleet_quip
+                state_not: "unknown"
+              - condition: state
+                entity: input_text.claude_fleet_quip
+                state_not: "unavailable"
+            content: |
+              {#- `visibility` is evaluated in the browser, but this template is still
+                  rendered on the server whether the card shows or not. So the entity
+                  reference has to survive the optional package being absent: STRICT
+                  undefined turns a dot-chain on a missing entity into an error, and
+                  the card renders as a red box rather than nothing at all. -#}
+              {%- set q = states('input_text.claude_fleet_quip') %}
+              {%- if q not in ['unknown', 'unavailable', ''] %}
+              {%- set st = states.input_text.claude_fleet_quip %}
+              _{{ q }}_
+              {%- if st %} — {{ relative_time(st.last_changed) }} ago{% endif %}
+              {%- endif %}
+
+          # -------------------------------------------------------- plan usage
+          # Wide screens: gauge, gauge, At this rate, in thirds. Phones: the two gauges
+          # side by side and At this rate under them at full width, since a third of a
+          # phone left it one word per line. The cards are written once and reused
+          # with YAML anchors (&name ... *name), so the two layouts cannot drift.
+          # Each gauge exists three times (one per colour) and only one is shown;
+          # hidden cards take no space in a grid.
+          - type: grid
+            columns: 3
+            square: false
+            grid_options: { columns: full }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unavailable
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            cards:
+              # Reads the neutral sensor.claude_plan_* entities, which the package's
+              # PLAN USAGE SOURCE block maps from whatever integration you use. Every
+              # card here hides itself when that source is absent.
+              # Usage limits are per ACCOUNT, not per Mac — one integration,
+              # not one per machine. A limit is the only thing that stops every session
+              # at once, which is why it sits on the fleet dashboard at all.
+              # The gauges carry the number. Every WORD about them — when the pool
+              # resets, and whether you hit the limit before it does — lives in the
+              # one card to their right. Two captions under two gauges said "resets"
+              # twice over and still could not say what happens in between.
+              # Colour = where the pool is HEADED, not how full it is (see the pace
+              # sensors in the package). A gauge's severity is fixed per card, so each
+              # gauge exists three times, one per colour, and visibility shows the one
+              # matching the pace sensor. Exactly one of the three is ever visible;
+              # "unknown" falls to green, the no-news colour.
+              - &session_gauges
+                type: grid
+                columns: 1
+                square: false
+                cards:
+                  - type: gauge
+                    entity: sensor.claude_plan_session_usage
+                    name: Session (5h)
+                    min: 0
+                    max: 100
+                    needle: false
+                    severity: { green: 0, yellow: 1000, red: 1000 }
+                    visibility:
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unknown
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unavailable
+                      - condition: state
+                        entity: sensor.claude_session_pace
+                        state_not: tight
+                      - condition: state
+                        entity: sensor.claude_session_pace
+                        state_not: over
+                  - type: gauge
+                    entity: sensor.claude_plan_session_usage
+                    name: Session (5h)
+                    min: 0
+                    max: 100
+                    needle: false
+                    severity: { green: 0, yellow: 0, red: 1000 }
+                    visibility:
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unknown
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unavailable
+                      - condition: state
+                        entity: sensor.claude_session_pace
+                        state: tight
+                  - type: gauge
+                    entity: sensor.claude_plan_session_usage
+                    name: Session (5h)
+                    min: 0
+                    max: 100
+                    needle: false
+                    severity: { green: 0, yellow: 0, red: 0 }
+                    visibility:
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unknown
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unavailable
+                      - condition: state
+                        entity: sensor.claude_session_pace
+                        state: over
+              - &weekly_gauges
+                type: grid
+                columns: 1
+                square: false
+                cards:
+                  - type: gauge
+                    entity: sensor.claude_plan_weekly_usage
+                    name: Weekly
+                    min: 0
+                    max: 100
+                    needle: false
+                    severity: { green: 0, yellow: 1000, red: 1000 }
+                    visibility:
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unknown
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unavailable
+                      - condition: state
+                        entity: sensor.claude_weekly_pace
+                        state_not: tight
+                      - condition: state
+                        entity: sensor.claude_weekly_pace
+                        state_not: over
+                  - type: gauge
+                    entity: sensor.claude_plan_weekly_usage
+                    name: Weekly
+                    min: 0
+                    max: 100
+                    needle: false
+                    severity: { green: 0, yellow: 0, red: 1000 }
+                    visibility:
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unknown
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unavailable
+                      - condition: state
+                        entity: sensor.claude_weekly_pace
+                        state: tight
+                  - type: gauge
+                    entity: sensor.claude_plan_weekly_usage
+                    name: Weekly
+                    min: 0
+                    max: 100
+                    needle: false
+                    severity: { green: 0, yellow: 0, red: 0 }
+                    visibility:
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unknown
+                      - condition: state
+                        entity: sensor.claude_plan_session_usage
+                        state_not: unavailable
+                      - condition: state
+                        entity: sensor.claude_weekly_pace
+                        state: over
+
+              # Third box on the same row as the gauges (12 + 12 + 12 of 36) — the
+              # text needs the most width of the three, not the least.
+              # LITERAL block (|), not folded (>-): folding collapses the blank lines
+              # that separate these into paragraphs, which ran the heading straight
+              # into the first line as "At this rateSession:". For the same reason
+              # NO tag that opens a paragraph may use a left-trim {%- : it eats the
+              # blank line before it. HA renders this with breaks:true, so a single
+              # newline inside a paragraph is a visible line break — which is how
+              # a stray one left "· resets first" stranded on its own line.
+              - &plan_text
+                type: markdown
+                visibility:
+                  - condition: state
+                    entity: sensor.claude_plan_session_usage
+                    state_not: unknown
+                  - condition: state
+                    entity: sensor.claude_plan_session_usage
+                    state_not: unavailable
+                content: |
+                  {#- ONE rate drives everything below. usage_rate is %/MINUTE over the last
+                      30 minutes and time_to_limit is (100 - used) / usage_rate, both derived in
+                      the package from the plan-usage source block. Because they share a rate,
+                      "do I hit the limit first" and "where do I land" cannot contradict each
+                      other. Never recover a rate by inverting some other ETA: an earlier
+                      version did, against a source whose ETA disagreed with its own
+                      time-to-limit, and projected 44% where the rate said 63%. #}
+                  {%- set mins = states('sensor.claude_plan_session_resets_in') | float(-1) %}
+                  {%- set use = states('sensor.claude_plan_session_usage') | float(-1) %}
+                  {%- set rate = states('sensor.claude_plan_usage_rate') | float(-1) %}
+                  {%- set ttl = states('sensor.claude_plan_time_to_limit') | float(-1) %}
+                  {%- set reset = as_datetime(states('sensor.claude_plan_session_reset')) %}
+                  {%- set w_use = states('sensor.claude_plan_weekly_usage') | float(-1) %}
+                  {%- set w_reset = as_datetime(states('sensor.claude_plan_weekly_reset')) %}
+                  ### At this rate:
+
+                  {% if reset -%}
+                  **Session** — resets **{{ as_local(reset).strftime('%-I:%M %p') }}**{% if mins >= 0 %}, {{ (mins // 60) | int ~ 'h ' if mins >= 60 else '' }}{{ (mins % 60) | round(0) | int }}m away{% endif %}
+                  {#- Same shape as the Weekly line below, and for the same reason: two
+                      percentages you can subtract in your head beat a projection you have to
+                      trust. SESSION_WINDOW is the Max plan's 5-hour pool — the same 5h named
+                      on the gauge — and is the one number here not read from a sensor.
+                      The verdict uses time_to_limit vs resets_in, which share usage_rate with
+                      nothing else, so it cannot disagree with the percentages beside it.
+                      Below 20% used the warning drops its siren but KEEPS the hour. Two
+                      reasons, and only the second survives scrutiny: the 30-minute burn rate
+                      does reach back into the previous pool right after a reset -- but only
+                      for the first half hour, so it explains very little. What actually
+                      matters is that early in a window a couple of heavy minutes swing the
+                      projection wildly, and anything at or above pace projects a breach. The
+                      number is honest, it is just noisy, and "though it is early" says that
+                      without inventing a mechanism. #}
+                  {%- set win = 300 %}
+                  {%- set u = use | round(0) | int %}
+                  {%- set el = (100 * (win - mins) / win) | round(0) | int %}
+                  {{ u }}% used against {{ el }}% of the window
+                  {%- if ttl >= 0 and mins >= 0 and ttl < mins %}
+                  {%- if u >= 20 %} — ⚠️ **limit at {{ (now() + timedelta(minutes=ttl)).strftime('%-I:%M %p') }}**
+                  {%- else %} — limit at **{{ (now() + timedelta(minutes=ttl)).strftime('%-I:%M %p') }}**, though it is early
+                  {%- endif %}
+                  {%- elif ttl >= 0 %}
+                  {#- Mirror the Weekly line exactly when there is no warning to give:
+                      two percentages and their difference. "limit not in reach" was a
+                      third framing for a number already sitting beside it. -#}
+                  {%- set sd = el - u %}
+                  {%- if sd > 2 %} — {{ sd }} under pace
+                  {%- elif sd < -2 %} — **{{ 0 - sd }} over pace**
+                  {%- else %} — on pace
+                  {%- endif %}
+                  {%- endif %}
+                  {%- else -%}
+                  **Session** — reset time unavailable
+                  {%- endif %}
+
+                  {% if w_use >= 0 and w_reset -%}
+                  {# Derive the delta from the SAME rounded integers shown beside it.
+                     Rounding used, elapsed and weekly_pace independently produced
+                     "32% used · 35% through · 4 under", which does not add up. #}
+                  {%- set u = w_use | round(0) | int -%}
+                  {%- set el = (100 * (1 - ((as_timestamp(w_reset) - as_timestamp(now())) / (7 * 86400)))) | round(0) | int -%}
+                  {%- set d = el - u -%}
+                  {%- set days = ((as_timestamp(w_reset) - as_timestamp(now())) / 86400) | round(0) | int -%}
+                  **Weekly** — resets **{{ as_local(w_reset).strftime('%a %-I:%M %p') }}**{% if days >= 0 %}, {{ days }}d away{% endif %}
+                  {{ u }}% used against {{ el }}% of the week
+                  {%- if d > 2 %} — {{ d }} under pace
+                  {%- elif d < -2 %} — **{{ 0 - d }} over pace**
+                  {%- else %} — on pace
+                  {%- endif %}
+                  {#- the gauge's other amber: few points left, and a heavy day before
+                      the reset would take more. Said here so the colour never
+                      disagrees with the sentence beside it. -#}
+                  {%- if state_attr('sensor.claude_weekly_pace', 'at_risk') == true and d >= -2 %}, but **only {{ 100 - u }}% left**, and a heavy day could use ~{{ state_attr('sensor.claude_weekly_pace', 'spike_before_reset') | round(0) | int }}% before the reset
+                  {%- endif %}
+                  {#- Wall-clock projection from the week's OWN average rate, not from a
+                     short-window derivative: a recent burn rate extrapolated across a
+                     week assumes round-the-clock work and projects running out
+                     tomorrow. Averaging over the elapsed week carries the nights and
+                     the gaps already, and uses the same two integers printed above, so
+                     the sentence cannot contradict itself. Silent when the reset wins —
+                     the pace figure has already said you are fine. #}
+                  {%- if u > 0 and el > 0 %}
+                  {%- set out = now() + timedelta(hours = (168 * el / 100) * (100 - u) / u) %}
+                  {%- if as_timestamp(out) < as_timestamp(w_reset) %} · out **{{ out.strftime('%a %-I %p') }}**{% endif %}
+                  {%- endif %}
+                  {%- else -%}
+                  **Weekly** — reset time unavailable
+                  {%- endif %}
+
+                  <details><summary>What do these mean?</summary><ul><li><b>Session</b> is the 5-hour limit, <b>Weekly</b> the 7-day one, both as your plan integration reports them.</li><li><b>Pace</b> compares % used with % of the window gone. Under pace means room to spare; over pace means using it faster than time passes.</li><li><b>Gauge colours, session</b>: where this rate lands by the reset. Yellow if it projects to 90% or more; red if it projects to 100% once more than 20% is used (earlier than that, one busy minute swings the projection, so it stays yellow).</li><li><b>Gauge colours, weekly</b>: yellow when 3–9 points over pace, <i>or</i> on pace but with less left than a heavy day would use before the reset (your busiest day of the last week, never under 1.5× an average day). Red at 10+ points over pace, or at 100%.</li><li><b>Time to limit</b> assumes you keep going at the current rate; early in a window it is noisy, and the card says so.</li></ul></details>
+
+          # The same three cards on a phone: see the comment at the top of this block.
+          - type: grid
+            columns: 1
+            square: false
+            grid_options: { columns: full }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unavailable
+              - condition: screen
+                media_query: "(max-width: 767px)"
+            cards:
+              - type: grid
+                columns: 2
+                square: false
+                cards:
+                  - *session_gauges
+                  - *weekly_gauges
+              - *plan_text
+
+          # ---------------------------------------------------------- sessions
+          # Ten columns on a wide screen; a phone gets the compact card below instead.
+          - type: markdown
+            grid_options: { columns: full }
+            title: Sessions
+            visibility:
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            content: |
+              {%- set ss = states.sensor | selectattr('attributes.claude_session', 'defined') | list %}
+              {%- set dot = {'needs_input':'🟠','working':'🔵','idle':'🟢','ended':'⚪'} %}
+              {%- if ss | count == 0 %}
+              _Nothing reporting yet. Start a Claude Code session on any Mac._
+              {%- else %}
+              {#- A session pins its CLI version at START, so two sessions on one
+                  Mac routinely differ -- one begun before an upgrade, one after.
+                  Newest wins by NUMERIC compare: "2.1.9" sorts above "2.1.278" as
+                  a string. Only well-formed triples take part; anything else is
+                  ignored rather than crashing the card. -#}
+              {%- set nv = namespace(best=[], shown='', hbest=[], hshown='') %}
+              {%- for s in ss %}
+              {#- the newest CLI counts both the builds sessions started on and the
+                  build INSTALLED on each Mac (cli_installed): otherwise an update
+                  that landed while every session was open flagged nothing, since
+                  no session had started on it yet -#}
+              {%- for cv in [s.attributes.get('cc_version', ''), s.attributes.get('cli_installed', '')] %}
+              {%- if cv and cv.count('.') == 2 and (cv | replace('.', '') | int(-1)) >= 0 %}
+              {%- set t = cv.split('.') | map('int') | list %}
+              {%- if t > nv.best %}{% set nv.best = t %}{% set nv.shown = cv %}{% endif %}
+              {%- endif %}
+              {%- endfor %}
+              {#- the same for the fleet hook's own version: a plugin session keeps
+                  the version it started with, so after an update this is how to
+                  see which sessions still need a restart -#}
+              {%- set hv = s.attributes.get('hook_version', '') %}
+              {%- if hv and hv.count('.') == 2 and (hv | replace('.', '') | int(-1)) >= 0 %}
+              {%- set t = hv.split('.') | map('int') | list %}
+              {%- if t > nv.hbest %}{% set nv.hbest = t %}{% set nv.hshown = hv %}{% endif %}
+              {%- endif %}
+              {%- endfor %}
+              {%- macro n(x) -%}
+                {%- set x = x | int(0) -%}
+                {{ (x / 1000000) | round(1) ~ 'M' if x >= 1000000 else (((x / 1000) | round(0) | int ~ 'k') if x >= 1000 else x) }}
+              {%- endmacro %}
+              {#- The RTK column only exists when some session is on a Mac with RTK
+                  installed. It is optional, and a column of dashes for a tool you
+                  do not use is noise. -#}
+              {%- set rk = namespace(any=false) %}
+              {%- for s in ss if s.attributes.get('rtk') is not none %}{% set rk.any = true %}{% endfor %}
+              | | Session | Machine | Model | Context % | Tokens · cache |{{ ' RTK |' if rk.any }} CLI | Hook | Working on | For |
+              |---|---|---|---|---|---|{{ '---|' if rk.any }}---|---|---|---|
+              {%- for want in ['needs_input', 'working', 'idle', 'ended'] %}
+              {%- for s in ss | selectattr('state', 'eq', want) | sort(attribute='attributes.label') %}
+              {%- set a = s.attributes %}
+              {%- set mins = ((as_timestamp(now()) - as_timestamp(a.state_since, 0)) / 60) | int %}
+              {%- set seen = as_timestamp(now()) - as_timestamp(a.last_seen, 0) %}
+              {%- set limit = a.get('stale_after_min', 20) | int(20) %}
+              {#- seconds, not whole minutes: the status sensors in the package use seconds,
+                  and rounding down here left a row blue for up to a minute after
+                  the headline had already counted it stale -#}
+              {%- set d = '🔴' if (s.state == 'working' and limit > 0 and seen > limit * 60) else dot.get(s.state, '⚫') %}
+
+              {#- Percentage, not tokens: it was asked for, and it is the more
+                  scannable figure. The denominator is an ASSUMPTION -- the transcript
+                  names the model but never its context limit, and the same name
+                  covers the 200k and 1M variants. The hook latches a session to 1M
+                  once it is observed above its assumed limit, so the figure is right
+                  for every 200k session always, and for a long-context session from
+                  the point it passes 200k. CLAUDE_HA_CONTEXT_LIMIT fixes it earlier.
+                  (There is no marker in the transcript. `context-1m` looked like one
+                  until the grep for it turned out to be matching the grep itself,
+                  recorded in the transcript as a tool call.) -#}
+              {%- set ct = a.get('context_tokens', 0) | int(0) %}
+              {%- set cl = a.get('context_limit', 200000) | int(200000) %}
+              {%- set pct = ((100 * ct / cl) | round(0) | int) if (ct > 0 and cl > 0) else 0 %}
+              {%- set ctxcell = (('⚠️ ' if pct >= 85 else '') ~ pct ~ '%') if pct > 0 else '—' %}
+              {#- Auto-compactions today. One is the session doing its job; a second
+                  means it keeps outgrowing its window and should be restarted rather
+                  than carried on, so that one gets the warning. Manual /compact is
+                  a choice, and not counted here. -#}
+              {%- set ac = a.get('auto_compactions_today', 0) | int(0) %}
+              {%- set ctxcell = ctxcell ~ ((' · ' ~ ('⚠️ ' if ac >= 2 else '') ~ '🗜️' ~ (ac if ac > 1 else '')) if ac > 0 else '') %}
+              {#- a readable model name that can't wrap: claude-opus-5-5 is "Opus 5.5",
+                  claude-haiku-4-5-20251001 "Haiku 4.5". Split at its hyphen, the raw
+                  id wrapped as "opus-5-" over "5". -#}
+              {%- set mp = (a.get('model', '') | replace('claude-', '')).split('-') %}
+              {%- if mp and mp[-1] | length == 8 and mp[-1] | int(0) > 0 %}{% set mp = mp[:-1] %}{% endif %}
+              {%- set m = ((mp[0] | capitalize) ~ (('&nbsp;' ~ (mp[1:] | join('.'))) if mp | count > 1 else '')) if mp[0] else '—' %}
+              {%- set cv = a.get('cc_version', '') %}
+              {%- set old = cv and nv.shown and cv != nv.shown %}
+              {%- set cli = ('⚠️ ' if old else '') ~ (cv or '—') %}
+              {%- set hv = a.get('hook_version', '') %}
+              {%- set hold = nv.hshown and hv != nv.hshown %}
+              {%- set hookcell = ('⚠️ ' if hold else '') ~ (hv or '—') %}
+              {#- prefer the LLM summary; fall back to the raw last prompt -#}
+              {%- set ask = (a.get('summary') or a.get('last_prompt') or '—') | replace('|', '/') | truncate(70) %}
+              {#- tokens and RTK arrive with the hook of 2026-09-23; a Mac still on
+                  the older hook has neither, and shows a dash rather than a zero -#}
+              {%- set k = a.get('tokens_today') if a.get('tokens_today') is mapping else {} %}
+              {%- set kin = (k.get('input', 0) | int(0)) + (k.get('cache_read', 0) | int(0)) + (k.get('cache_write', 0) | int(0)) %}
+              {%- set ktot = kin + (k.get('output', 0) | int(0)) %}
+              {%- set tokcell = (n(ktot) ~ ' · ' ~ ((100 * (k.get('cache_read', 0) | int(0)) / kin) | round(0) | int) ~ '%') if kin > 0 else '—' %}
+              {%- set rtk = a.get('rtk') %}
+              {%- set rtkcell = '✂️' if rtk == true else ('off' if rtk == false else '—') %}
+              | {{ d }} | **{{ a.label }}** | {{ a.machine }} | {{ m }} | {{ ctxcell }} | {{ tokcell }} |{{ (' ' ~ rtkcell ~ ' |') if rk.any }} {{ cli }} | {{ hookcell }} | {{ ask }} | {{ mins // 60 ~ 'h ' if mins >= 60 else '' }}{{ mins % 60 }}m |
+              {%- endfor %}
+              {%- endfor %}
+
+              {#- The blank line below is load-bearing: without it markdown keeps
+                  reading table rows and this renders as another column in a final
+                  row of the table, which is exactly how it shipped once. -#}
+              {#- Counted with an explicit .get() loop, NOT rejectattr: a session
+                  that has not published since cc_version existed has no such
+                  attribute, and rejectattr dot-accesses it. Under HA's strict
+                  undefined that raises and takes the WHOLE card with it -- the
+                  table vanished entirely, which is a far worse failure than a
+                  missing footer. -#}
+              {%- set bn = namespace(n=0) %}
+              {%- for s in ss %}
+              {%- set v = s.attributes.get('cc_version', '') %}
+              {%- if v and nv.shown and v != nv.shown %}{% set bn.n = bn.n + 1 %}{% endif %}
+              {%- endfor %}
+              {%- set behind = bn.n %}
+              {%- if behind > 0 %}
+
+              _⚠️ {{ behind }} session{{ 's' if behind != 1 else '' }} on a build older than {{ nv.shown }}, the newest installed or running. A session pins its CLI version when it starts, so it needs restarting to pick up the current one._
+              {%- endif %}
+              {%- endif %}
+
+              <details><summary>What do these mean?</summary><ul><li>🔵 working · 🟠 needs you (a permission prompt or a question) · 🟢 idle, your move · ⚪ ended · 🔴 <b>stale</b>: marked working but silent past its Mac's stale limit, so probably stuck or asleep.</li><li><b>Context %</b>: how full the session's context window is, from its last request. ⚠️ from 85%. It assumes a 200k window until the session proves it has 1M by going past 200k.</li><li><b>🗜️</b>: the session compacted on its own today, having hit its context limit. <b>⚠️ 🗜️2</b> or more: it keeps outgrowing its window and is worth restarting. Your own <code>/compact</code> is not counted.</li><li><b>Tokens · cache</b>: tokens the session used today, subagents included, then the share of them read from the prompt cache.</li><li><b>RTK</b>: ✂️ RTK is filtering that Mac's commands; <i>off</i>: RTK is installed but its Claude Code hook is not.</li><li><b>CLI</b>: the Claude Code version the session started on. <b>Hook</b>: the fleet hook's version. ⚠️ on either means older than the newest seen. A Claude Code update, or a plugin update of the hook, only reaches a session when it restarts; a hook installed with <code>install.sh</code> updates on its next event.</li></ul></details>
+
+          # The sessions on a phone: four columns instead of ten, since a phone shows
+          # about four before the table runs off the edge. What each session is doing
+          # goes under its name. The state rules match the full table above,
+          # including stale in seconds; the rest is a rotate-to-landscape away.
+          - type: markdown
+            grid_options: { columns: full }
+            title: Sessions
+            visibility:
+              - condition: screen
+                media_query: "(max-width: 767px)"
+            content: |
+              {%- set ss = states.sensor | selectattr('attributes.claude_session', 'defined') | list %}
+              {%- set dot = {'needs_input':'🟠','working':'🔵','idle':'🟢','ended':'⚪'} %}
+              {%- if ss | count == 0 %}
+              _Nothing reporting yet. Start a Claude Code session on any Mac._
+              {%- else %}
+              | | Session | Machine | For |
+              |---|---|---|---|
+              {%- for want in ['needs_input', 'working', 'idle', 'ended'] %}
+              {%- for s in ss | selectattr('state', 'eq', want) | sort(attribute='attributes.label') %}
+              {%- set a = s.attributes %}
+              {%- set mins = ((as_timestamp(now()) - as_timestamp(a.state_since, 0)) / 60) | int %}
+              {%- set seen = as_timestamp(now()) - as_timestamp(a.last_seen, 0) %}
+              {%- set limit = a.get('stale_after_min', 20) | int(20) %}
+              {%- set d = '🔴' if (s.state == 'working' and limit > 0 and seen > limit * 60) else dot.get(s.state, '⚫') %}
+              {%- set ask = (a.get('summary') or a.get('last_prompt') or '') | replace('|', '/') | truncate(60) %}
+              | {{ d }} | **{{ a.label }}**{{ ('<br>_' ~ ask ~ '_') if ask }} | {{ a.machine }} | {{ mins // 60 ~ 'h ' if mins >= 60 else '' }}{{ mins % 60 }}m |
+              {%- endfor %}
+              {%- endfor %}
+              {%- endif %}
+
+          # ------------------------------------------------------------- today
+          # An even split whatever the screen: fixed widths (24 + 24 of a 48-column section) left each card alone on its row once a narrower screen shrank the section to 36.
+          - type: grid
+            columns: 2
+            square: false
+            grid_options: { columns: full }
+            visibility:
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            cards:
+              - &today_card
+                type: markdown
+                title: Today
+                content: |
+                  {%- set today = now().strftime('%Y-%m-%d') %}
+                  {%- set live = states.sensor | selectattr('attributes.claude_session', 'defined')
+                       | selectattr('attributes.day', 'eq', today) | map(attribute='attributes') | list %}
+                  {%- set live_ids = live | map(attribute='session_id') | list %}
+                  {%- set arch = (state_attr('sensor.claude_archived_today', 'sessions') or [])
+                       if state_attr('sensor.claude_archived_today', 'day') == today else [] %}
+                  {%- set ss = live + (arch | rejectattr('session_id', 'in', live_ids) | list) %}
+                  {%- set ns = namespace(wait=0, prompts=0, prs=[]) %}
+                  {%- for s in ss %}
+                    {%- set ns.wait = ns.wait + (s.wait_minutes_today | int(0)) %}
+                    {%- set ns.prompts = ns.prompts + (s.prompts_today | int(0)) %}
+                    {%- set ns.prs = ns.prs + (s.prs_today | default([], true) | list) %}
+                  {%- endfor %}
+                  {#- ONE source line: the card renders with breaks on, so every newline
+                      in the template is a line break on screen -#}
+                  **{{ ss | count }}** sessions · **{{ ns.prompts }}** prompts · **{{ ns.prs | unique | list | count }}** PRs · **{{ ns.wait }}** min waiting on you
+
+                  {#- only list sessions with something to report. Listing every session
+                      as "no PR yet" was 20+ lines that said nothing. -#}
+                  {%- set notable = ss | selectattr('prs_today') | list
+                       + (ss | rejectattr('prs_today') | selectattr('wait_minutes_today', 'gt', 0) | list) %}
+                  {%- for s in notable | sort(attribute='wait_minutes_today', reverse=true) %}
+                  - {{ s.label }}{{ '' if s.session_id in live_ids else ' _(closed)_' }}
+                  {%- if s.prs_today %}: {{ s.prs_today | join(', ') }}{% endif %}
+                  {%- if s.wait_minutes_today | int(0) > 0 %} · waited {{ s.wait_minutes_today }}m{% endif %}
+                  {%- endfor %}
+
+              # --------------------------------------------------- personal records
+              - &records_card
+                type: markdown
+                title: Personal records
+                content: |
+                  {%- set r = state_attr('sensor.claude_fleet_records', 'records') %}
+                  {%- set r = r if r is mapping else {} %}
+                  {%- set today = now().strftime('%Y-%m-%d') %}
+                  {%- macro dur(m) -%}
+                    {{ (m // 60) ~ 'h ' ~ (m % 60) ~ 'm' if m >= 60 else m ~ ' min' }}
+                  {%- endmacro %}
+                  {%- macro tok(x) -%}
+                    {{ ((x / 1000000) | round(1) ~ 'M' if x >= 1000000 else ((x / 1000) | round(0) | int ~ 'k')) ~ ' tokens' }}
+                  {%- endmacro %}
+                  {%- set rows = [('concurrent', 'Most sessions at once', 'sessions'),
+                                  ('prs_day', 'Most PRs in a day', 'PRs'),
+                                  ('prompts_day', 'Most prompts in a day', 'prompts'),
+                                  ('tokens_day', 'Most tokens in a day', 'tok'),
+                                  ('solo_run', 'Longest solo run', 'dur'),
+                                  ('longest_wait', 'Longest you kept one waiting', 'dur')] %}
+                  {%- if r %}
+                  | Record | Best | Set |
+                  |:--|--:|:--|
+                  {%- for k, name, unit in rows %}
+                  {%- set x = r.get(k) if r.get(k) is mapping else {} %}
+                  {%- if x %}
+                  {%- set v = x.get('value', 0) | int(0) %}
+                  {%- set at = x.get('at', '') %}
+                  {%- set when = as_datetime(at) if at else none %}
+                  {%- set isnew = at[:10] == today %}
+                  {%- set who = x.get('label', '') if k != 'prs_day' else '' %}
+                  {#- only the two duration records have a session behind them, so the
+                      name rides along with the record instead of owning a column.
+                      No trailing dash: it would eat the newline this row needs. #}
+                  {#- non-breaking spaces inside the value and the date: in a narrow card
+                      "Sep 22" and "172.1M tokens" wrapped onto two lines each -#}
+                  {%- set best = (dur(v) if unit == 'dur' else (tok(v) if unit == 'tok' else v ~ ' ' ~ unit)) | trim | replace(' ', '&nbsp;') %}
+                  | {{ '🏆 ' if isnew }}{{ name }}{{ (' · _' ~ ((who[:20] ~ '…') if who | length > 22 else who) ~ '_') if who }} | **{{ best }}** | {{ ('today' if isnew else (when.strftime('%b') ~ '&nbsp;' ~ when.day)) if when else '' }} |
+                  {%- endif %}
+                  {%- endfor %}
+                  {%- else %}
+                  No records yet. They start counting now.
+                  {%- endif %}
+
+                  <details><summary>What do these mean?</summary><ul><li><b>Longest solo run</b>: one session working without needing you. It counts only while the session keeps reporting, so a laptop asleep mid-task cannot hold it.</li><li><b>Longest you kept one waiting</b>: from a session asking to you answering.</li><li><b>Most tokens in a day</b>: every session, subagents included.</li><li>🏆 = set today. Records are kept forever.</li></ul></details>
+
+          # On a phone the two stack: side by side, the records table's Best column
+          # was cut off and its names wrapped one word per line.
+          - type: grid
+            columns: 1
+            square: false
+            grid_options: { columns: full }
+            visibility:
+              - condition: screen
+                media_query: "(max-width: 767px)"
+            cards:
+              - *today_card
+              - *records_card
+
+          # ---------------------------------------------------------- machines
+          # One row per Mac, from the session sensors (live + archived today) and
+          # each Mac's RTK sensor; no sensors of its own. "Hook" says whether that
+          # Mac runs the current hook: a session without tokens_today was published
+          # by an older one, and that Mac needs `git pull && ./install.sh`.
+          - type: markdown
+            title: Machines
+            grid_options: { columns: full }
+            visibility:
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            content: |
+              {%- macro n(x) -%}
+                {%- set x = x | int(0) -%}
+                {{ (x / 1000000) | round(1) ~ 'M' if x >= 1000000 else (((x / 1000) | round(0) | int ~ 'k') if x >= 1000 else x) }}
+              {%- endmacro %}
+              {%- set today = now().strftime('%Y-%m-%d') %}
+              {%- set sensors = states.sensor | selectattr('attributes.claude_session', 'defined') | list %}
+              {%- set live = sensors | map(attribute='attributes') | selectattr('day', 'eq', today) | list %}
+              {%- set ids = live | map(attribute='session_id') | list %}
+              {%- set arch = (state_attr('sensor.claude_archived_today', 'sessions') or [])
+                   if state_attr('sensor.claude_archived_today', 'day') == today else [] %}
+              {%- set ss = live + (arch | rejectattr('session_id', 'in', ids) | list) %}
+              {%- set rtk = namespace(m={}) %}
+              {%- for r in states.sensor | selectattr('attributes.claude_rtk', 'defined') %}
+              {%- set d = r.attributes.get('today') %}
+              {%- if r.attributes.get('day') == today and d is mapping %}
+              {%- set rtk.m = dict(rtk.m, **{r.attributes.get('machine', '?'): d.get('saved', 0) | int(0)}) %}
+              {%- endif %}
+              {%- endfor %}
+              {%- set machines = (ss | map(attribute='machine') | list
+                                  + (sensors | map(attribute='attributes.machine') | list)) | unique | sort | list %}
+              {#- newest hook version seen anywhere, compared numerically (a string
+                  compare puts 0.1.9 above 0.1.10); a Mac behind it gets a warning -#}
+              {%- set hv = namespace(best=[], shown='') %}
+              {%- for s in sensors %}
+              {%- set v = s.attributes.get('hook_version', '') %}
+              {%- if v and v.count('.') == 2 and (v | replace('.', '') | int(-1)) >= 0 %}
+              {%- set t = v.split('.') | map('int') | list %}
+              {%- if t > hv.best %}{% set hv.best = t %}{% set hv.shown = v %}{% endif %}
+              {%- endif %}
+              {%- endfor %}
+              {%- if machines | count == 0 %}
+              _No machine has reported yet._
+              {%- else %}
+              | Machine | Running | Sessions today | Prompts | PRs | Waited | Tokens | Cached | Output |{{ ' RTK saved |' if rtk.m }} Hook |
+              |:--|--:|--:|--:|--:|--:|--:|--:|--:|{{ '--:|' if rtk.m }}:-:|
+              {%- for mc in machines %}
+              {%- set ns = namespace(n=0, p=0, prs=[], w=0, i=0, o=0, r=0, cw=0, run=0, old=0, via=[], ver=[], live=0) %}
+              {%- for s in ss if s.get('machine') == mc %}
+              {%- set k = s.get('tokens_today') if s.get('tokens_today') is mapping else {} %}
+              {%- set ns.n = ns.n + 1 %}
+              {%- set ns.p = ns.p + (s.get('prompts_today', 0) | int(0)) %}
+              {%- set ns.prs = ns.prs + ((s.get('prs_today') or []) | list) %}
+              {%- set ns.w = ns.w + (s.get('wait_minutes_today', 0) | int(0)) %}
+              {%- set ns.i = ns.i + (k.get('input', 0) | int(0)) %}
+              {%- set ns.o = ns.o + (k.get('output', 0) | int(0)) %}
+              {%- set ns.r = ns.r + (k.get('cache_read', 0) | int(0)) %}
+              {%- set ns.cw = ns.cw + (k.get('cache_write', 0) | int(0)) %}
+              {%- endfor %}
+              {%- for s in sensors if s.attributes.get('machine') == mc %}
+              {%- if s.state != 'ended' %}{% set ns.run = ns.run + 1 %}{% endif %}
+              {#- only a session that published in the last 15 min counts: an idle one
+                  may simply not have fired since this Mac was updated -#}
+              {%- set fresh = (as_timestamp(now()) - as_timestamp(s.attributes.get('last_seen'), 0)) < 900 %}
+              {%- if fresh and 'tokens_today' not in s.attributes %}{% set ns.old = ns.old + 1 %}{% endif %}
+              {%- set ns.live = ns.live + 1 %}
+              {%- if s.attributes.get('installed_via') %}{% set ns.via = ns.via + [s.attributes.get('installed_via')] %}{% endif %}
+              {%- if s.attributes.get('hook_version') %}{% set ns.ver = ns.ver + [s.attributes.get('hook_version')] %}{% endif %}
+              {%- endfor %}
+              {%- set inn = ns.i + ns.r + ns.cw %}
+              | **{{ mc }}** | {{ ns.run }} | {{ ns.n }} | {{ ns.p }} | {{ ns.prs | unique | list | count }} | {{ ns.w }}m | {{ n(inn + ns.o) if inn else '—' }} | {{ (((100 * ns.r / inn) | round(0) | int) ~ '%') if inn else '—' }} | {{ n(ns.o) if inn else '—' }} |{{ (' ' ~ (n(rtk.m.get(mc)) if rtk.m.get(mc) is not none else '—') ~ ' |') if rtk.m }} {%- set vers = ns.ver | unique | list %}{% set behind = hv.shown and (not vers or hv.shown not in vers) %} {{ '— (none open)' if ns.live == 0 else '⚠️ update' if ns.old else (('⚠️ ' if behind else '✓ ') ~ (ns.via | unique | sort | join(' + ')) ~ ((' ' ~ (vers | sort | join('/'))) if vers else (' (no version)' if hv.shown else ''))) }} |
+              {%- endfor %}
+              {%- endif %}
+
+              <details><summary>What do these mean?</summary><ul><li><b>Running</b>: sessions open now. <b>Sessions today</b> includes ones already closed.</li><li><b>Waited</b>: minutes that Mac's sessions spent waiting on you.</li><li><b>Tokens, Cached, Output</b>: as on the Tokens tab, for that Mac's sessions today.</li><li><b>Hook</b>: ✓ current, how it was installed (<i>plugin</i> or <i>script</i>) and its version. ⚠️ before the version: behind the newest version any Mac is running; update that one. <i>none open</i>: that Mac ran sessions today but has none open now, so there is nothing to ask its version. <b>⚠️ update</b>: a session from that Mac published in the last 15 minutes without token data; run <code>git pull && ./install.sh</code> there.</li></ul></details>
+
+          # Machines on a phone: five of the eleven columns, the ones that answer "is
+          # every Mac reporting, and how busy is it". The same counting as above.
+          - type: markdown
+            title: Machines
+            grid_options: { columns: full }
+            visibility:
+              - condition: screen
+                media_query: "(max-width: 767px)"
+            content: |
+              {%- macro n(x) -%}
+                {%- set x = x | int(0) -%}
+                {{ (x / 1000000) | round(1) ~ 'M' if x >= 1000000 else (((x / 1000) | round(0) | int ~ 'k') if x >= 1000 else x) }}
+              {%- endmacro %}
+              {%- set today = now().strftime('%Y-%m-%d') %}
+              {%- set sensors = states.sensor | selectattr('attributes.claude_session', 'defined') | list %}
+              {%- set live = sensors | map(attribute='attributes') | selectattr('day', 'eq', today) | list %}
+              {%- set ids = live | map(attribute='session_id') | list %}
+              {%- set arch = (state_attr('sensor.claude_archived_today', 'sessions') or [])
+                   if state_attr('sensor.claude_archived_today', 'day') == today else [] %}
+              {%- set ss = live + (arch | rejectattr('session_id', 'in', ids) | list) %}
+              {%- set machines = (ss | map(attribute='machine') | list
+                                  + (sensors | map(attribute='attributes.machine') | list)) | unique | sort | list %}
+              {%- if machines | count == 0 %}
+              _No machine has reported yet._
+              {%- else %}
+              | Machine | Running | Today | Tokens | Hook |
+              |:--|--:|--:|--:|:-:|
+              {%- for mc in machines %}
+              {%- set ns = namespace(n=0, t=0, run=0, old=0) %}
+              {%- for s in ss if s.get('machine') == mc %}
+              {%- set k = s.get('tokens_today') if s.get('tokens_today') is mapping else {} %}
+              {%- set ns.n = ns.n + 1 %}
+              {%- set ns.t = ns.t + (k.get('input', 0) | int(0)) + (k.get('output', 0) | int(0)) + (k.get('cache_read', 0) | int(0)) + (k.get('cache_write', 0) | int(0)) %}
+              {%- endfor %}
+              {%- for s in sensors if s.attributes.get('machine') == mc %}
+              {%- if s.state != 'ended' %}{% set ns.run = ns.run + 1 %}{% endif %}
+              {%- set fresh = (as_timestamp(now()) - as_timestamp(s.attributes.get('last_seen'), 0)) < 900 %}
+              {%- if fresh and 'tokens_today' not in s.attributes %}{% set ns.old = ns.old + 1 %}{% endif %}
+              {%- endfor %}
+              | **{{ mc }}** | {{ ns.run }} | {{ ns.n }} | {{ n(ns.t) if ns.t else '—' }} | {{ '⚠️' if ns.old else '✓' }} |
+              {%- endfor %}
+              {%- endif %}
+
+          # ------------------------------------------------------- today KPIs
+          # Three tiles: thirds on a wide screen, one per row on a phone, where a third
+          # cut their names to "Runni…". One list of tiles, reused by anchor.
+          - type: grid
+            columns: 3
+            square: false
+            grid_options: { columns: full }
+            visibility:
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            cards: &kpi_tiles
+              - type: tile
+                entity: sensor.claude_sessions_running
+                name: Running now
+              - type: tile
+                entity: sensor.claude_peak_today
+                name: Peak today
+                state_content: [state, at]
+              - type: tile
+                entity: sensor.claude_waiting_on_you_today
+                name: Waiting on you
+          - type: grid
+            columns: 1
+            square: false
+            grid_options: { columns: full }
+            visibility:
+              - condition: screen
+                media_query: "(max-width: 767px)"
+            cards: *kpi_tiles
+
+          # ------------------------------------------------ sessions over time
+          # Needs "History explorer card" from HACS. One line: how many sessions ran
+          # at once. The stacked waiting/stale/working/idle chart (with its six range
+          # buttons) was replaced by this on purpose -- concurrency is the question
+          # this chart answers, and the breakdown is what the headline and the
+          # sessions table already say about right now.
+          #
+          # Range and scrolling come from the card's own toolbar, so no helper entity
+          # and no per-range copies. Past the recorder's 10 days of history it reads
+          # LONG-TERM STATISTICS by itself (statistics.enabled defaults on), which
+          # exist because the sensor carries state_class: measurement. Those are
+          # hourly, so the line gets coarser as you scroll past day 10 -- it is not a
+          # change in behaviour.
+          - type: custom:history-explorer-card
+            grid_options: { columns: full }
+            header: "Sessions running at once"
+            defaultTimeRange: 24h
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: max
+              period: hour
+            graphs:
+              - type: line
+                entities:
+                  - entity: sensor.claude_sessions_running
+                    name: Running
+                    lineMode: stepped   # a count jumps 3 -> 4; a curve draws 3.5 sessions
+                    color: "#3987e5"
+                    fill: "rgba(57, 135, 229, 0.15)"
+
+          # Usage is a PERCENTAGE and the chart above is a COUNT -- different units,
+          # so this is its own chart, not a second y-axis. Same card as the one above,
+          # so both pick a range the same way from their own toolbar, and both read
+          # long-term statistics (hourly max) past the recorder's 10 days.
+          # The y-axis is pinned at 0-100: auto-scaling would stretch a week spent
+          # between 80% and 83% into a cliff. The old dashed 90% line is gone -- this
+          # card has no reference lines, and the pace-coloured gauges above now say
+          # "close to the limit" better than a fixed 90% ever did.
+          - type: custom:history-explorer-card
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unavailable
+            grid_options: { columns: full }
+            header: "Plan usage"
+            # Three weeks, not a day: the weekly pool climbs for seven days and then
+            # resets, and one day of it is a nearly flat line. Three cycles show the
+            # shape: how fast each week fills and where it was when it reset.
+            defaultTimeRange: 3w
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: max
+              period: hour
+            graphs:
+              - type: line
+                options: { ymin: 0, ymax: 100 }
+                entities:
+                  - entity: sensor.claude_plan_session_usage
+                    name: Session (5h)
+                    lineMode: stepped
+                    color: "#3987e5"
+                  - entity: sensor.claude_plan_weekly_usage
+                    name: Weekly
+                    lineMode: stepped
+                    color: "#199e70"
+
+
+  # ============================================================== tokens view
+  # Where the day's tokens went, over time. Split out of Sessions on 2026-09-23:
+  # Sessions is what is happening now, this is how the month went.
+  - title: Tokens
+    path: tokens
+    icon: mdi:counter
+    type: sections
+    max_columns: 4
+    sections:
+      - type: grid
+        column_span: 4
+        cards:
+          # ------------------------------------------------------------ tokens
+          # An even split whatever the screen: fixed widths (24 + 24 of a 48-column section) left each card alone on its row once a narrower screen shrank the section to 36.
+          - type: grid
+            columns: 2
+            square: false
+            grid_options: { columns: full }
+            cards:
+              - type: markdown
+                title: Tokens today
+                content: |
+                  {%- macro n(x) -%}
+                    {%- set x = x | int(0) -%}
+                    {{ (x / 1000000) | round(1) ~ 'M' if x >= 1000000 else (((x / 1000) | round(0) | int ~ 'k') if x >= 1000 else x) }}
+                  {%- endmacro %}
+                  {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+                  {%- set b = b if b is mapping else {} %}
+                  {%- if (b.get('calls', 0) | int(0)) == 0 %}
+                  _Nothing counted yet today. Figures come from the transcripts when a session finishes a turn._
+                  {%- else %}
+                  **{{ n(states('sensor.claude_tokens_today')) }}** tokens over **{{ b.calls }}** model calls · **{{ b.cache_hit_pct }}%** read from cache · **{{ b.compactions }}** compaction{{ '' if b.compactions == 1 else 's' }}{{ (' (' ~ b.get('auto_compactions', 0) ~ ' auto)') if b.compactions }}
+
+                  {# ONE table, a column per model (heaviest first) and a Total column
+                      once there is more than one. Two stacked tables ran together: a
+                      `{%-` ate the blank line markdown needs between them. A Mac on an
+                      older hook has no per-model split, so without any the table falls
+                      back to the single Total column. -#}
+                  {%- set bm = b.get('by_model') if b.get('by_model') is mapping else {} %}
+                  {%- set models = bm.items() | sort(attribute='1.total', reverse=true) | list %}
+                  {%- set cols = models + ([('Total', b)] if models | count != 1 else []) %}
+                  {%- set tot = [states('sensor.claude_tokens_today') | int(0), 1] | max %}
+                  {%- macro mname(k) -%}
+                    {%- set mp = k.split('-') -%}
+                    {{ (mp[0] | capitalize) ~ (('&nbsp;' ~ (mp[1:] | join('.'))) if mp | count > 1 else '') }}
+                  {%- endmacro %}
+                  | |{% for m, v in cols %} {{ m if m == 'Total' else mname(m) }} |{% endfor %}
+                  |:--|{% for c in cols %}--:|{% endfor %}
+                  | Read from cache |{% for m, v in cols %} {{ n(v.get('cache_read', 0)) }} |{% endfor %}
+                  | Written to cache |{% for m, v in cols %} {{ n(v.get('cache_write', 0)) }} |{% endfor %}
+                  | Uncached input |{% for m, v in cols %} {{ n(v.get('input', 0)) }} |{% endfor %}
+                  | Output |{% for m, v in cols %} {{ n(v.get('output', 0)) }} |{% endfor %}
+                  | Calls |{% for m, v in cols %} {{ v.get('calls', 0) }} |{% endfor %}
+                  | **Share of the day** |{% for m, v in cols %} **{{ (100 * (v.get('total', tot) | int(0)) / tot) | round(0) | int }}%** |{% endfor %}
+
+
+                  {#- the three heaviest sessions: where the day's tokens went -#}
+                  {%- set today = now().strftime('%Y-%m-%d') %}
+                  {%- set ss = states.sensor | selectattr('attributes.claude_session', 'defined')
+                       | selectattr('attributes.day', 'eq', today) | map(attribute='attributes') | list %}
+                  {%- set ns = namespace(rows=[]) %}
+                  {%- for a in ss %}
+                  {%- set k = a.get('tokens_today') if a.get('tokens_today') is mapping else {} %}
+                  {%- set t = (k.get('input', 0) | int(0)) + (k.get('output', 0) | int(0)) + (k.get('cache_read', 0) | int(0)) + (k.get('cache_write', 0) | int(0)) %}
+                  {%- if t > 0 %}{% set ns.rows = ns.rows + [{'label': a.label, 't': t}] %}{% endif %}
+                  {%- endfor %}
+                  {%- if ns.rows %}
+
+                  Heaviest: {% for r in (ns.rows | sort(attribute='t', reverse=true))[:3] %}{{ r.label | truncate(28) }} ({{ n(r.t) }}){{ ' · ' if not loop.last }}{% endfor %}
+                  {%- endif %}
+                  {%- endif %}
+
+                  <details><summary>What do these mean?</summary><ul><li><b>Read from cache</b>: the conversation so far, re-read on every request. By far the largest and the cheapest per token.</li><li><b>Written to cache</b>: new context, stored so the next requests can read it cheaply.</li><li><b>Uncached input</b>: the few tokens sent fresh each time.</li><li><b>Output</b>: what Claude wrote, thinking included. The most expensive per token.</li><li><b>Compaction</b>: a session summarising its history to make room. <i>Auto</i> means it hit its context limit; the rest were <code>/compact</code>.</li><li><b>Share of the day</b>: each model's part of today's tokens. Subagents count toward the model they ran on.</li></ul></details>
+
+              # RTK is optional. With no machine reporting it, the card says what it
+              # would show and where to get it, rather than disappearing: an absent card
+              # teaches nothing, and this is how someone finds out RTK exists.
+              - type: markdown
+                title: RTK
+                content: |
+                  {%- macro n(x) -%}
+                    {%- set x = x | int(0) -%}
+                    {{ (x / 1000000) | round(1) ~ 'M' if x >= 1000000 else (((x / 1000) | round(0) | int ~ 'k') if x >= 1000 else x) }}
+                  {%- endmacro %}
+                  {%- set today = now().strftime('%Y-%m-%d') %}
+                  {%- set ms = states.sensor | selectattr('attributes.claude_rtk', 'defined') | list %}
+                  {%- if ms | count == 0 %}
+                  [RTK](https://github.com/rtk-ai/rtk) filters what shell commands print (test runs, git, build logs) before Claude reads it, so less of each session's context goes on noise.
+
+                  If you used it, what it saved would show here, per Mac, today and this week. Install it and turn on its Claude Code hook (`rtk init -g`); nothing else to set up. The fleet hook finds RTK's ledger on its own.
+                  {%- else %}
+                  {%- set ns = namespace(saved=0, claimed=0, cmds=0, pas=0) %}
+                  {%- for s in ms if s.attributes.get('day') == today and s.attributes.get('today') is mapping %}
+                  {%- set d = s.attributes.get('today') %}
+                  {%- set ns.saved = ns.saved + (d.get('saved', 0) | int(0)) %}
+                  {%- set ns.claimed = ns.claimed + (d.get('claimed_saved', 0) | int(0)) %}
+                  {%- set ns.cmds = ns.cmds + (d.get('commands', 0) | int(0)) %}
+                  {%- set ns.pas = ns.pas + (d.get('passthrough', 0) | int(0)) %}
+                  {%- endfor %}
+                  **{{ n(ns.saved) }}** tokens kept out of context today{% if states('sensor.claude_rtk_share_today') | is_number %}, **{{ states('sensor.claude_rtk_share_today') }}%** of the new context those Macs would otherwise have taken on{% endif %}, over **{{ ns.cmds - ns.pas }}** filtered commands ({{ ns.pas }} passed through untouched)
+
+                  | Machine | Hook | Today | Week | RTK's own count, week |
+                  |:--|:-:|--:|--:|--:|
+                  {%- for s in ms | sort(attribute='attributes.machine') %}
+                  {%- set a = s.attributes %}
+                  {%- set d = a.get('today') if (a.get('day') == today and a.get('today') is mapping) else {} %}
+                  {%- set w = a.get('week') if a.get('week') is mapping else {} %}
+                  | {{ a.get('machine', '?') }} | {{ '✂️' if a.get('hook_on') else 'off' }} | {{ n(d.get('saved', 0)) }} · {{ d.get('pct', 0) }}% | {{ n(w.get('saved', 0)) }} · {{ w.get('pct', 0) }}% | {{ n(w.get('claimed_saved', 0)) }} |
+                  {%- endfor %}
+
+                  {%- endif %}
+
+                  <details><summary>What do these mean?</summary><ul><li><b>Kept out</b>: what RTK trimmed from command output that Claude would actually have seen. Claude Code shows the model at most 30,000 characters of a command's output, so RTK's own count, against the full raw output, is higher: shown as "RTK's own count".</li><li><b>Share of new context</b>: kept out ÷ (kept out + the new context those Macs' sessions took on). The fair comparison: a trimmed output would have entered as new context.</li><li><b>Passed through</b>: commands RTK ran unchanged, which save nothing.</li><li><b>Hook</b>: ✂️ RTK's Claude Code hook is on for that Mac.</li><li>The token counts are RTK's own estimates.</li></ul></details>
+
+          # ------------------------------------------------------ tokens by day
+          # History explorer, so it scrolls and changes range from its own toolbar,
+          # like every chart here. BAR mode sums the RISES within each interval and
+          # treats a drop as a reset: exactly a counter that returns to zero at
+          # midnight, so one bar per day = that day's total. Stacked by model
+          # family, one sensor per family (see claude_fleet.yaml for why). Past the
+          # recorder's 10 days it reads long-term statistics (hourly max), which
+          # give the same daily sum. Starts 2026-09-23, partial that day.
+          - type: custom:history-explorer-card
+            grid_options: { columns: full }
+            header: "Tokens by day"
+            labelAreaWidth: 95   # room for 9-digit ticks; at the default 65 they overlapped
+            defaultTimeRange: 1o
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: max
+              period: hour
+            graphs:
+              # `interval` belongs in `options`: the card reads it from there. Set on
+              # the graph itself it is silently ignored, and every "by day" chart
+              # drew hourly bars with the selector reading "Hourly".
+              - type: bar
+                options: { stacked: true, interval: daily }
+                entities:
+                  - entity: sensor.claude_tokens_today_opus
+                    name: Opus
+                    color: "#7e57c2"
+                  - entity: sensor.claude_tokens_today_sonnet
+                    name: Sonnet
+                    color: "#3987e5"
+                  - entity: sensor.claude_tokens_today_haiku
+                    name: Haiku
+                    color: "#199e70"
+                  - entity: sensor.claude_tokens_today_fable
+                    name: Fable
+                    color: "#e5a039"
+                  - entity: sensor.claude_tokens_today_other
+                    name: Other
+                    color: "#8a8a8a"
+
+          # --------------------------------------------------------- RTK by day
+          # Two graphs in one card, so they share a time axis: tokens RTK kept out
+          # per day (bars; claude_rtk_saved_today resets at midnight, so a day's
+          # rises are its total), and that as a share of new context (a line; a
+          # percentage does not add up). Hidden with no Mac reporting RTK; the RTK
+          # card above does the explaining then.
+          - type: custom:history-explorer-card
+            visibility:
+              - condition: state
+                entity: sensor.claude_rtk_saved_today
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_rtk_saved_today
+                state_not: unavailable
+            grid_options: { columns: full }
+            header: "RTK by day"
+            labelAreaWidth: 95   # room for 6-digit ticks beside the axis title
+            defaultTimeRange: 1o
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: max
+              period: hour
+            graphs:
+              - type: bar
+                options: { interval: daily }
+                entities:
+                  - entity: sensor.claude_rtk_saved_today
+                    name: Tokens kept out
+                    color: "#e5a039"
+              - type: line
+                options: { ymin: 0 }
+                entities:
+                  - entity: sensor.claude_rtk_share_today
+                    name: Share of new context
+                    lineMode: stepped
+                    color: "#e5a039"
+
+          # ----------------------------------------------------- output by day
+          # Output alone: what Claude actually wrote, thinking included, and the
+          # priciest kind. In the chart above, cache reads (~98%) drown it out.
+          - type: custom:history-explorer-card
+            grid_options: { columns: full }
+            header: "Output tokens by day"
+            labelAreaWidth: 95   # room for 9-digit ticks; at the default 65 they overlapped
+            defaultTimeRange: 1o
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: max
+              period: hour
+            graphs:
+              - type: bar
+                options: { stacked: true, interval: daily }
+                entities:
+                  - entity: sensor.claude_output_tokens_today_opus
+                    name: Opus
+                    color: "#7e57c2"
+                  - entity: sensor.claude_output_tokens_today_sonnet
+                    name: Sonnet
+                    color: "#3987e5"
+                  - entity: sensor.claude_output_tokens_today_haiku
+                    name: Haiku
+                    color: "#199e70"
+                  - entity: sensor.claude_output_tokens_today_fable
+                    name: Fable
+                    color: "#e5a039"
+                  - entity: sensor.claude_output_tokens_today_other
+                    name: Other
+                    color: "#8a8a8a"
+
+          # ---------------------------------------------------- cache hit by day
+          # A LINE, not bars: a percentage does not add up over a day, and bar mode
+          # would sum its rises. The running figure for the day, so each day ends
+          # on its final value. A dip means context was being rebuilt: compactions,
+          # restarts, or a session idle past the cache's lifetime.
+          - type: custom:history-explorer-card
+            grid_options: { columns: full }
+            header: "Read from cache"
+            defaultTimeRange: 1o
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: mean
+              period: hour
+            graphs:
+              - type: line
+                options: { ymax: 100 }
+                entities:
+                  - entity: sensor.claude_cache_hit_today
+                    name: Cache hit %
+                    lineMode: stepped
+                    color: "#3987e5"
+
+          # --------------------------------------------- weekly pool per day
+          # How many points of the WEEKLY limit each day used: which days eat the
+          # week. Bar mode sums the rises within each day and treats a drop as a
+          # reset, which is the weekly reset exactly; a reset mid-day splits into
+          # the rise before it plus the rise after. Replaced "Peak plan usage by
+          # day" (a statistics-graph, which has no range picker): a daily high is
+          # what the Plan usage chart already shows zoomed out, and this card can
+          # only draw sums as bars, never a max.
+          - type: custom:history-explorer-card
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_weekly_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_weekly_usage
+                state_not: unavailable
+            grid_options: { columns: full }
+            header: "Weekly limit used per day"
+            defaultTimeRange: 1o
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: max
+              period: hour
+            graphs:
+              - type: bar
+                options: { interval: daily }
+                entities:
+                  - entity: sensor.claude_plan_weekly_usage
+                    name: Weekly points used
+                    color: "#199e70"
+
+  # ============================================================== setup view
+  # What is working and what is next. Reference, not something to watch, so it
+  # lives on its own tab; the Sessions tab shows a banner pointing here only
+  # while something required is missing. Two columns wide: a checklist
+  # stretched across a wall display is hard to read.
+  - title: Setup
+    path: setup
+    icon: mdi:list-status
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        column_span: 2
+        cards:
+          # Plain prose for someone new; no template, so it can't break.
+          - type: markdown
+            grid_options: { columns: full }
+            title: How it works
+            content: |
+              Every computer running Claude Code has a small **hook**, installed as a Claude Code plugin or with `install.sh`. Claude Code runs it at each step of a session (a prompt, a tool call, a finish), and it sends that session's state to your **MQTT broker**: working, waiting on you, or idle, plus its model, context use and tokens, read from the session's own transcript.
+
+              Home Assistant's MQTT integration turns each session into a sensor on its own, so there is **no custom integration** here. Everything else is ordinary Home Assistant: template sensors add the sessions up, this dashboard shows them, and cleanup removes a session after it ends or goes quiet. Nothing flows back to your computers; they only report.
+
+              The **extras** below are independent. Plan limits come from a plan-usage integration in Home Assistant, RTK savings from each computer's RTK, and the desk display and aside are separate packages. Leave any of them out and its part of the dashboard simply doesn't appear.
+
+          - type: markdown
+            grid_options: { columns: full }
+            content: |
+              {%- set ss = states.sensor | selectattr('attributes.claude_session', 'defined') | list %}
+              {%- set macs = ss | map(attribute='attributes.machine') | unique | sort | list %}
+              {%- set ns = namespace(old=[], gh=false, sum=false) %}
+              {%- for s in ss %}
+              {%- set a = s.attributes %}
+              {%- set fresh = (as_timestamp(now()) - as_timestamp(a.get('last_seen'), 0)) < 900 %}
+              {%- if fresh and 'tokens_today' not in a %}{% set ns.old = ns.old + [a.get('machine', '?')] %}{% endif %}
+              {%- if a.get('pr_number') or a.get('prs_all') %}{% set ns.gh = true %}{% endif %}
+              {%- if a.get('summary') %}{% set ns.sum = true %}{% endif %}
+              {%- endfor %}
+              {%- set bad = ['unknown', 'unavailable', '', 'None', 'none'] %}
+              {%- set plan = states('sensor.claude_plan_session_usage') | is_number %}
+              {%- set clock_pkg = states('input_boolean.claude_fleet_desk_display') not in bad %}
+              {%- set clock = states('sensor.claude_fleet_awtrix_prefix') not in bad %}
+              {%- set rtk = states('sensor.claude_rtk_saved_today') | is_number %}
+              {%- set aside_pkg = states('input_text.claude_fleet_quip') not in ['unknown', 'unavailable'] %}
+              {%- set aside = states('input_text.claude_fleet_quip') not in bad %}
+              {%- set recap = states('automation.claude_daily_recap') %}
+              {%- set recap_at = states('input_datetime.claude_recap_time')[:5] %}
+              {%- if ss | count == 0 %}
+              <ha-alert alert-type="warning" title="No sessions have reported yet">On each Mac, run <code>./install.sh</code> and put your MQTT password in <code>~/.claude/ha-status.env</code>. Then start a <b>new</b> Claude Code session: hooks load when a session starts, so one already open never reports.</ha-alert>
+              {%- elif ns.old %}
+              <ha-alert alert-type="warning" title="Out-of-date hook on {{ ns.old | unique | join(', ') }}">Run <code>git pull && ./install.sh</code> on that Mac. Its sessions report, but without tokens, compactions or RTK.</ha-alert>
+              {%- else %}
+              <ha-alert alert-type="success" title="Reporting">{{ ss | count }} session{{ '' if ss | count == 1 else 's' }} from {{ macs | count }} Mac{{ '' if macs | count == 1 else 's' }}: {{ macs | join(', ') }}.</ha-alert>
+              {%- endif %}
+
+              **Optional extras.** Each appears on the dashboard once it's there; none needs the others.
+
+              | | Extra | What it does | Status |
+              |:-:|:--|:--|:--|
+              {%- set ps = states('sensor.claude_plan_source') %}
+              {%- set pm = state_attr('sensor.claude_plan_source', 'minutes_since_report') %}
+              | {{ {'ok': '✅', 'stale': '⚠️', 'unavailable': '⚠️'}.get(ps, '➖') }} | **Plan limits** | Your plan's 5-hour and weekly usage, with gauges coloured by whether you'll run out before each resets. | {{ {'ok': 'Working; last reported ' ~ pm ~ ' min ago.',
+                      'stale': 'Not reported for ' ~ pm ~ ' min. Check the integration under Settings → Devices & services.',
+                      'unavailable': 'The integration is unavailable; it most often needs you to sign in again, under Settings → Devices & services.'}.get(ps,
+                      'Install the <a href="https://github.com/corgan2222/ha-clawdmeter">Clawdmeter</a> integration; it is found on its own. Another plan-usage integration: set its four entity ids on <code>sensor.claude_plan_source</code> in the package\'s PLAN USAGE SOURCE block.') }} |
+              | {{ '✅' if ns.gh else '➖' }} | **PR numbers** | The PRs each session opened, in the sessions table and the day's totals. | {{ 'Found.' if ns.gh else 'Install <code>gh</code> on each Mac and run <code>gh auth login</code>. Nothing shows until a session opens a PR, so this may simply be waiting.' }} |
+              | {{ '✅' if ns.sum else '➖' }} | **"Working on" summaries** | One line per session saying what it's doing, written by Haiku from the transcript. | {{ 'Found.' if ns.sum else 'Written by <code>claude -p</code> after a session finishes a turn; they appear within minutes, unless they are turned off (<code>SUMMARY_ENABLED=0</code>, or the plugin\'s summaries option).' }} |
+              | {{ '✅' if rtk else '➖' }} | **RTK savings** | How much command output <a href="https://github.com/rtk-ai/rtk">RTK</a> kept out of Claude's context, per Mac and by day. | {{ 'Found.' if rtk else 'Install RTK on a Mac and run <code>rtk init -g</code>; the hook finds it.' }} |
+              | {{ '✅' if clock else '➖' }} | **Desk display** | Fleet status on an AWTRIX pixel clock: a corner light in the fleet's colour, "X needs you" alerts, and plan usage screens. | {{ 'Found.' if clock else ('Package installed, no clock found yet. Point an AWTRIX NG clock at your MQTT broker with Home Assistant discovery on.' if clock_pkg else 'Add <code>claude_fleet_awtrix.yaml</code> to your packages, for an AWTRIX NG clock (a Ulanzi TC001 works).') }} |
+              | ➖ | **Status light (bulb)** | The same colours on any smart bulb, for anyone without a pixel clock. | Set <code>STATUS LIGHT</code> in <code>claude_fleet.yaml</code> to the bulb's entity id. |
+              | {{ '✅' if aside else '➖' }} | **The aside** | A dry one-line comment on the fleet, written by an LLM from the real numbers. | {{ 'Found.' if aside else ('Package installed; its first line comes once sessions are running.' if aside_pkg else 'Add <code>claude_fleet_quip.yaml</code> and give it an author: a script or a conversation agent.') }} |
+              | {{ '✅' if recap == 'on' else '➖' }} | **Daily recap** | A notification in Home Assistant each evening: sessions, prompts, PRs, time spent waiting on you. Skipped on days with no sessions. | {{ ('On, at ' ~ recap_at ~ '.') if recap == 'on' else 'Off.' }} Switch it, or change the time, below. |
+
+              **Switches.** The ones below run in Home Assistant. Summaries, RTK and PR numbers are set on each Mac instead, in <code>~/.claude/ha-status.env</code> (<code>SUMMARY_ENABLED=0</code> turns summaries off): the hook only sends to Home Assistant, and never reads settings back.
+
+          # The recap pair first: both are always there, so they stay side by side
+          # whichever optional tiles below are hidden.
+          - type: tile
+            grid_options: { columns: 6 }
+            entity: automation.claude_daily_recap
+            name: Daily recap
+            icon: mdi:clipboard-text-clock-outline
+            visibility:
+              - condition: state
+                entity: automation.claude_daily_recap
+                state: ["on", "off"]
+            tap_action: { action: toggle }
+            icon_tap_action: { action: toggle }
+          - type: tile
+            grid_options: { columns: 6 }
+            entity: input_datetime.claude_recap_time
+            name: Recap time
+            icon: mdi:clock-outline
+            visibility:
+              - condition: state
+                entity: input_datetime.claude_recap_time
+                state_not: unavailable
+          - type: tile
+            grid_options: { columns: 6 }
+            entity: input_boolean.claude_fleet_desk_display
+            name: Desk display
+            icon: mdi:dots-grid
+            visibility:
+              - condition: state
+                entity: input_boolean.claude_fleet_desk_display
+                state: ["on", "off"]
+            tap_action: { action: toggle }
+            icon_tap_action: { action: toggle }
+          - type: tile
+            grid_options: { columns: 6 }
+            entity: input_boolean.claude_lamp_enabled
+            name: Status light (bulb)
+            icon: mdi:lightbulb-on-outline
+            visibility:
+              - condition: state
+                entity: input_boolean.claude_lamp_enabled
+                state: ["on", "off"]
+            tap_action: { action: toggle }
+            icon_tap_action: { action: toggle }
+          - type: tile
+            grid_options: { columns: 6 }
+            entity: automation.claude_fleet_aside
+            name: The aside
+            icon: mdi:comment-quote-outline
+            visibility:
+              - condition: state
+                entity: automation.claude_fleet_aside
+                state: ["on", "off"]
+            tap_action: { action: toggle }
+            icon_tap_action: { action: toggle }

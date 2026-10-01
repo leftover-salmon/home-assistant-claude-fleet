@@ -1,0 +1,15 @@
+{
+  "name": "claude-fleet",
+  "description": "Claude Fleet: your Claude Code sessions on a Home Assistant dashboard",
+  "owner": {
+    "name": "leftover-salmon"
+  },
+  "plugins": [
+    {
+      "name": "claude-fleet",
+      "source": "./",
+      "description": "Report every Claude Code session to Home Assistant over MQTT: live status, tokens, plan limits and RTK savings on a wall dashboard.",
+      "version": "0.1.12"
+    }
+  ]
+}

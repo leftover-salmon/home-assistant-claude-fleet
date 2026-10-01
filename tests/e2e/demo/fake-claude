@@ -1,0 +1,28 @@
+#!/bin/bash
+# A stand-in `claude` for the demo's fake homes. scenario.sh copies it to
+# $CF_DEMO_DIR/bin/claude, next to two files it reads:
+#   version        the CLI version to report (the transcripts' own version, so
+#                  the dashboard shows no "old build" warning)
+#   summaries.tsv  needle<TAB>summary: the first needle found in the prompt
+#                  picks the summary
+# The hook calls it two ways, and nothing else:
+#   claude --version                      -> "2.1.284 (Claude Code)"
+#   claude -p --model haiku ... "<prompt>" -> "SUMMARY: ..."
+# It never talks to any API.
+here="$(cd "$(dirname "$0")" && pwd)"
+case "${1:-}" in
+  --version|-v)
+    printf '%s (Claude Code)\n' "$(cat "$here/version")"
+    exit 0 ;;
+  -p|--print)
+    prompt="${!#}"   # the last argument; the hook passes the prompt last
+    while IFS="$(printf '\t')" read -r needle summary; do
+      [ -n "$needle" ] || continue
+      case "$prompt" in
+        *"$needle"*) printf 'SUMMARY: %s\n' "$summary"; exit 0 ;;
+      esac
+    done < "$here/summaries.tsv"
+    exit 0 ;;
+esac
+echo "fake claude: only --version and -p are supported" >&2
+exit 1
