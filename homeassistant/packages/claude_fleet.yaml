@@ -13,6 +13,11 @@ input_boolean:
   claude_lamp_enabled:
     name: Claude status light
     icon: mdi:lightbulb-on-outline
+  # Off unless you turn it on: the one thing in Claude Fleet that reaches the
+  # internet. See "Claude · update check" at the end.
+  claude_fleet_update_check:
+    name: Claude Fleet update check
+    icon: mdi:package-up
 
 # When the daily recap arrives; change it on the dashboard's Setup tab. No `initial:`,
 # because that would reset the user's choice at every restart. A new time input
@@ -24,6 +29,17 @@ input_datetime:
     has_date: false
     has_time: true
     icon: mdi:clock-outline
+
+# GitHub's list of this project's releases, for the update check. Public, so no
+# token; unauthenticated, GitHub allows 60 requests an hour, and this makes one a day.
+rest_command:
+  claude_fleet_releases:
+    url: https://api.github.com/repos/leftover-salmon/home-assistant-claude-fleet/releases?per_page=30
+    method: GET
+    headers:
+      Accept: application/vnd.github+json
+      User-Agent: home-assistant-claude-fleet
+    timeout: 20
 
 template:
   # ======================================================= PLAN USAGE SOURCE
@@ -172,7 +188,7 @@ template:
       - name: Claude Fleet package version
         unique_id: claude_fleet_package_version
         icon: mdi:tag-outline
-        state: "0.2.0"
+        state: "0.3.0"
 
   # ---- derived from the four above --------------------------------------------
   - sensor:
@@ -1219,3 +1235,95 @@ automation:
               data: { topic: "{{ repeat.item.base }}/attrs", payload: "", retain: true }
             - action: mqtt.publish
               data: { topic: "{{ repeat.item.base }}/state", payload: "", retain: true }
+
+  # ---- update check: an update entity in Settings → Updates, opt-in -----------
+  # With input_boolean.claude_fleet_update_check on, ask GitHub once a day (and at
+  # startup, and when it is switched on) for the newest "Home Assistant files"
+  # release, and publish update.claude_fleet over MQTT discovery: the version you
+  # have, the newest, its notes and a link. It has no Install button, since
+  # updating means copying files into /config, which only code running inside HA
+  # could do. Hook releases are skipped: Claude Code updates the plugin itself.
+  # If GitHub can't be reached, the entity keeps the newest version it last saw.
+  # Off removes the entity: discovery cleared first, then its state (the other
+  # order makes the live entity read an empty message).
+  - id: claude_fleet_update_check
+    alias: "Claude · update check"
+    mode: queued
+    max_exceeded: silent
+    triggers:
+      - trigger: homeassistant
+        event: start
+        id: check
+      - trigger: time
+        at: "04:41:00"
+        id: check
+      - trigger: state
+        entity_id: sensor.claude_fleet_package_version   # new files, after a reload
+        to: ~
+        id: check
+      - trigger: state
+        entity_id: input_boolean.claude_fleet_update_check
+        to: "on"
+        id: check
+      - trigger: state
+        entity_id: input_boolean.claude_fleet_update_check
+        to: "off"
+        id: remove
+    variables:
+      disc: homeassistant/update/claude_fleet/config
+      topic: claude/fleet/update
+      tag_prefix: ha-files-v
+    actions:
+      - if:
+          - condition: trigger
+            id: remove
+        then:
+          - action: mqtt.publish
+            data: { topic: "{{ disc }}", payload: "", retain: true }
+          - action: mqtt.publish
+            data: { topic: "{{ topic }}", payload: "", retain: true }
+          - stop: switched off
+      - condition: state
+        entity_id: input_boolean.claude_fleet_update_check
+        state: "on"
+      - condition: template
+        value_template: "{{ states('sensor.claude_fleet_package_version') not in ['unknown', 'unavailable', ''] }}"
+      - action: rest_command.claude_fleet_releases
+        response_variable: gh
+        continue_on_error: true
+      - variables:
+          installed: "{{ states('sensor.claude_fleet_package_version') }}"
+          # the newest published Home Assistant files release; GitHub lists newest first
+          rel: >-
+            {%- set ok = gh is defined and gh.get('status') == 200 and gh.get('content') is list %}
+            {%- set ns = namespace(r=none) %}
+            {%- for r in (gh.content if ok else []) %}
+            {%- if ns.r is none and r.get('tag_name', '').startswith(tag_prefix)
+                  and not r.get('draft') and not r.get('prerelease') %}{% set ns.r = r %}{% endif %}
+            {%- endfor %}
+            {{ ns.r if ns.r is not none else {} }}
+          latest: >-
+            {{ rel.tag_name[tag_prefix | length:] if rel.get('tag_name')
+               else state_attr('update.claude_fleet', 'latest_version') or installed }}
+          url: >-
+            {{ rel.get('html_url') or state_attr('update.claude_fleet', 'release_url')
+               or 'https://github.com/leftover-salmon/home-assistant-claude-fleet/releases' }}
+          summary: >-
+            {%- set body = rel.get('body') or '' %}
+            {{ (body[:250] ~ '…') if body | length > 250 else body }}
+      - action: mqtt.publish
+        data:
+          topic: "{{ disc }}"
+          retain: true
+          payload: >-
+            {{ {'name': 'Claude Fleet', 'unique_id': 'claude_fleet_ha_files',
+                'state_topic': topic} | to_json }}
+      - action: mqtt.publish
+        data:
+          topic: "{{ topic }}"
+          retain: true
+          payload: >-
+            {{ {'installed_version': installed, 'latest_version': latest,
+                'title': 'Claude Fleet: Home Assistant files',
+                'release_url': url, 'release_summary': summary} | to_json }}
+

@@ -60,6 +60,21 @@ into your own. The sensors they read are `sensor.claude_sessions_waiting`,
 `binary_sensor.claude_anyone_waiting`, `sensor.claude_session_pace` and
 `sensor.claude_weekly_pace`.
 
+## Update check
+
+Turn on **Update check** on the Setup tab and a new version of the Home Assistant files
+appears in **Settings → Updates**, beside Home Assistant's own, with its release notes and
+a link to it. Once a day (and at startup), Home Assistant asks GitHub's public API for this
+project's newest "Home Assistant files" release. Nothing is sent but that request: no
+token, no account, and nothing about your setup. It is the only part of Claude Fleet that
+reaches the internet, which is why it's off until you turn it on.
+
+There is no Install button. Updating means copying files into `/config`, which only code
+running inside Home Assistant could do, and Claude Fleet runs none: copy the files the
+release names, then restart. **Skip** works as for any update. Hook versions aren't
+included: Claude Code offers those itself, and the Setup tab flags a computer that is
+behind. Turning the switch off removes the entity.
+
 ## The status light
 
 For a plain smart bulb, set `STATUS LIGHT` in `claude_fleet.yaml` to the bulb's entity id and

@@ -45,6 +45,7 @@ KEY_ENTITIES = [
     "sensor.claude_output_tokens_today_opus", "binary_sensor.claude_anyone_waiting",
     "binary_sensor.claude_fleet_setup_needed", "input_text.claude_fleet_quip",
     "input_boolean.claude_lamp_enabled", "input_datetime.claude_recap_time",
+    "input_boolean.claude_fleet_update_check",
 ]
 
 
@@ -103,6 +104,15 @@ def is_fleet(e):
     return e["logger"].startswith(FLEET_LOGGERS) or "claude" in text
 
 
+def github_unreachable(e):
+    """The update check's request failing for GitHub's reasons (a rate limit, an
+    outage, a timeout): not Claude Fleet's bug, and the check falls back to the last
+    version it saw. A 404 is not tolerated: that means the URL is wrong, which is."""
+    return (e["level"] == "WARNING" and e["logger"] == "homeassistant.components.rest_command"
+            and "api.github.com/repos/leftover-salmon/home-assistant-claude-fleet/" in e["msg"]
+            and "Status code 404" not in e["msg"])
+
+
 def check_log(text):
     out = []
     entries = parse_log(text)
@@ -121,7 +131,8 @@ def check_log(text):
         if e["level"] in ("ERROR", "CRITICAL"):
             detail = [l for l in e["lines"][1:] if l.strip()][-1:] if len(e["lines"]) > 1 else []
             head += ("  ... " + detail[0][:200]) if detail else ""
-        elif not (e["level"] == "WARNING" and is_fleet(e)) or any(a in e["msg"] for a in ALLOWED_WARNINGS):
+        elif (not (e["level"] == "WARNING" and is_fleet(e)) or any(a in e["msg"] for a in ALLOWED_WARNINGS)
+              or github_unreachable(e)):
             continue
         if head in seen:
             seen[head][1] += 1
@@ -311,6 +322,35 @@ def check_alerts(states, logbook, exp):
     for label in waiting:
         if not any("Claude is waiting on you" in m and label in m for m in sent):
             out.append("no waiting alert named %r; alerts sent: %s" % (label, sent[-5:] or "none"))
+    return out
+
+
+# ================================================================ update check
+# Opt-in: switched on, the package asks GitHub for the newest "Home Assistant
+# files" release and publishes update.claude_fleet; switched off, removes it.
+# This run reaches the real GitHub. If GitHub can't answer, the entity still
+# appears, with the installed version as the latest, so only its shape is
+# required, not a particular release.
+REPO_URL = "https://github.com/leftover-salmon/home-assistant-claude-fleet"
+
+
+def check_update(on, off, version):
+    """on: update.claude_fleet's state dict after switching on (None if it never
+    appeared); off: the same after switching off (None if it is gone)."""
+    out = []
+    if on is None:
+        return ["update.claude_fleet never appeared after switching the update check on"]
+    a = on.get("attributes", {})
+    if a.get("installed_version") != version:
+        out.append("update.claude_fleet installed_version = %s, the package is %s" % (a.get("installed_version"), version))
+    if not re.match(r"^\d+\.\d+\.\d+$", str(a.get("latest_version"))):
+        out.append("update.claude_fleet latest_version = %r, not a version" % a.get("latest_version"))
+    if not str(a.get("release_url", "")).startswith(REPO_URL + "/releases"):
+        out.append("update.claude_fleet release_url = %r, not this repo's releases" % a.get("release_url"))
+    if on.get("state") not in ("on", "off"):
+        out.append("update.claude_fleet = %s, expected on or off" % on.get("state"))
+    if off is not None:
+        out.append("update.claude_fleet still there after switching the update check off (%s)" % off.get("state"))
     return out
 
 
@@ -728,6 +768,22 @@ def self_test():
     expect("plan: session pace unknown fails", check_plan(_set(states, "sensor.claude_session_pace", "unknown")), True)
 
 
+    # ---- update check
+    u_on = {"state": "off", "attributes": {"installed_version": "0.3.0", "latest_version": "0.3.0",
+                                           "release_url": REPO_URL + "/releases/tag/ha-files-v0.3.0"}}
+    expect("update: on, then removed when off, passes", check_update(u_on, None, "0.3.0"), False)
+    expect("update: GitHub unreachable (latest = installed, the releases page) passes",
+           check_update(dict(u_on, attributes=dict(u_on["attributes"], release_url=REPO_URL + "/releases")), None, "0.3.0"), False)
+    expect("update: never appeared fails", check_update(None, None, "0.3.0"), True)
+    expect("update: still there after off fails", check_update(u_on, u_on, "0.3.0"), True)
+    expect("update: the wrong installed version fails", check_update(u_on, None, "0.3.1"), True)
+    expect("update: a latest that is not a version fails",
+           check_update(dict(u_on, attributes=dict(u_on["attributes"], latest_version="ha-files-v0.3.0")), None, "0.3.0"), True)
+    expect("update: unavailable fails", check_update(dict(u_on, state="unavailable"), None, "0.3.0"), True)
+    gh_403 = "2026-10-01 14:12:44.731 WARNING (MainThread) [homeassistant.components.rest_command] Error. Url: https://api.github.com/repos/leftover-salmon/home-assistant-claude-fleet/releases?per_page=30. Status code 403. Payload: None\n"
+    expect("log: GitHub rate-limiting the update check passes", check_log(GOOD_LOG + gh_403), False)
+    expect("log: the update check's URL answering 404 fails", check_log(GOOD_LOG + gh_403.replace("403", "404")), True)
+
     # ---- versions
     def _v(**kw):
         base = {"package": "0.2.0", "dashboard": "0.2.0", "changelog (Home Assistant files)": "0.2.0",
@@ -896,6 +952,30 @@ def live():
     record("alert blueprints loaded; the waiting alert named the waiting session",
            check_alerts(states(), lb if st == 200 else [], exp)
            + ([] if st == 200 else ["GET /api/logbook: %s %s" % (st, lb)]))
+
+    # ---- the update check: on, the entity appears; off, it goes
+    def update_entity():
+        st, r = ha.http("GET", "/api/states/update.claude_fleet", token=ha.token())
+        return r if st == 200 else None
+
+    def switch(service):
+        ha.http("POST", "/api/services/input_boolean/" + service,
+                {"entity_id": "input_boolean.claude_fleet_update_check"}, token=ha.token())
+
+    def wait(pred, secs=45):
+        end = time.time() + secs
+        while True:
+            u = update_entity()
+            if pred(u) or time.time() > end:
+                return u
+            time.sleep(2)
+    switch("turn_on")
+    u_on = wait(lambda u: u is not None)
+    switch("turn_off")
+    u_off = wait(lambda u: u is None)
+    a = (u_on or {}).get("attributes", {})
+    record("update check: on adds update.claude_fleet (latest %s), off removes it" % a.get("latest_version"),
+           check_update(u_on, u_off, read_repo_versions()["package"]))
 
     # ---- repairs and the log, last, so they cover everything above
     issues = ha.ws([{"type": "repairs/list_issues"}])[0]["result"]["issues"]

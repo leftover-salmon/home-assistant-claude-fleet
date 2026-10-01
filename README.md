@@ -85,6 +85,9 @@ Worth knowing before you install, because it's easy not to think about:
   and your settings except the password) is published, retained, to
   `claude/<machine>/diag/report`, so it can be read from the Home Assistant end.
 
+- **Only if you turn on the update check:** Home Assistant asks GitHub's public API once a
+  day for this project's newest release. Nothing about you or your setup is sent.
+
 Nothing is sent anywhere else. The hook talks only to your MQTT broker (and to `gh` and
 `claude`, if you have them). The MQTT password never appears on a command line, where other
 users of the computer could see it.
@@ -216,7 +219,8 @@ Only sessions started after installing report.
 
 The hook and the Home Assistant files have separate version numbers, and the
 [changelog](CHANGELOG.md) says which changed and what to copy. To hear about new versions,
-**Watch → Custom → Releases** on this repo.
+turn on the **Update check** on the Setup tab, which puts them in Settings → Updates
+([details](docs/EXTRAS.md#update-check)), or **Watch → Custom → Releases** on this repo.
 
 - **Plugin:** `/plugin` → **Marketplaces** → claude-fleet → **Update**, then update the plugin.
 - **Script:** `cd ~/home-assistant-claude-fleet && git pull && ./install.sh`.
@@ -230,8 +234,8 @@ dashboard don't match, and flags any computer whose hook is behind the others.
 
 - **[How it works](docs/HOW-IT-WORKS.md):** the pieces, session states, the daily recap,
   personal records, and when a session leaves the dashboard.
-- **[Optional extras](docs/EXTRAS.md):** plan usage, phone alerts, the status light, the desk
-  display and the aside.
+- **[Optional extras](docs/EXTRAS.md):** plan usage, phone alerts, the update check, the
+  status light, the desk display and the aside.
 - **[Troubleshooting and uninstalling](docs/TROUBLESHOOTING.md)**
 - **[Things that were learned the hard way](docs/LESSONS.md):** probably the most reusable
   part of this project. Home Assistant's strict templates, counting tokens honestly, hooks
