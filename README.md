@@ -23,8 +23,9 @@ What you get:
   saved, if you use it.
 - **Setup tab:** a checklist of what is working and what you could add next, and the
   switches.
-- **Optional:** a status light (an AWTRIX pixel clock, or any smart bulb) and a dry one-line
-  aside written by an LLM from the real numbers.
+- **Optional:** phone alerts when a session is waiting on you or a plan limit is running
+  hot (two blueprints, a couple of clicks each), a status light (an AWTRIX pixel clock, or
+  any smart bulb) and a dry one-line aside written by an LLM from the real numbers.
 
 <details>
 <summary>The Tokens tab, and the Sessions tab on a phone</summary>
@@ -224,8 +225,8 @@ The Setup tab warns about any computer on an out-of-date hook.
 
 - **[How it works](docs/HOW-IT-WORKS.md):** the pieces, session states, the daily recap,
   personal records, and when a session leaves the dashboard.
-- **[Optional extras](docs/EXTRAS.md):** plan usage, the status light, the desk display and
-  the aside.
+- **[Optional extras](docs/EXTRAS.md):** plan usage, phone alerts, the status light, the desk
+  display and the aside.
 - **[Troubleshooting and uninstalling](docs/TROUBLESHOOTING.md)**
 - **[Things that were learned the hard way](docs/LESSONS.md):** probably the most reusable
   part of this project. Home Assistant's strict templates, counting tokens honestly, hooks

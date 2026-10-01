@@ -289,6 +289,31 @@ def check_plan(states):
     return ["%s = %s, expected %s" % (e, by_id.get(e), v) for e, v in want.items() if by_id.get(e) != v]
 
 
+# ================================================================ alert blueprints
+# up.sh installs both blueprints and an automation from each, with a logbook entry
+# as the "other action" (the demo has no phone; the phone path was verified by hand,
+# AUTO-58). The scenario leaves one session waiting, so the waiting alert must have
+# fired and named it. The limits alert never fires here (its pace starts unknown,
+# which by design is not news), so for it, loading is the check.
+ALERT_AUTOMATIONS = ["automation.claude_fleet_alert_waiting", "automation.claude_fleet_alert_limits"]
+ALERT_LOG_NAME = "Claude Fleet alert"
+
+
+def check_alerts(states, logbook, exp):
+    out = []
+    by_id = {s["entity_id"]: s["state"] for s in states}
+    for a in ALERT_AUTOMATIONS:
+        if by_id.get(a) != "on":
+            out.append("%s = %s, expected on (unavailable means HA could not load the blueprint)"
+                       % (a, by_id.get(a)))
+    waiting = [v["label"] for v in exp["sessions"].values() if v["final"] == "needs_input"]
+    sent = [e.get("message", "") for e in logbook if e.get("name") == ALERT_LOG_NAME]
+    for label in waiting:
+        if not any("Claude is waiting on you" in m and label in m for m in sent):
+            out.append("no waiting alert named %r; alerts sent: %s" % (label, sent[-5:] or "none"))
+    return out
+
+
 # ======================================================= markdown templates
 def markdown_cards(config):
     """Every markdown card in a dashboard config, visible or not (phone-only
@@ -645,6 +670,19 @@ def self_test():
     expect("plan: weekly pace ok fails", check_plan(_set(states, "sensor.claude_weekly_pace", "ok")), True)
     expect("plan: session pace unknown fails", check_plan(_set(states, "sensor.claude_session_pace", "unknown")), True)
 
+    # ---- alert blueprints
+    al_states = states + [{"entity_id": a, "state": "on", "attributes": {}} for a in ALERT_AUTOMATIONS]
+    al_log = [{"name": ALERT_LOG_NAME, "message": "Claude is waiting on you: Session a"},
+              {"name": "Something else", "message": "Claude is waiting on you: Session b"}]
+    expect("alerts: both loaded and the waiting session named passes", check_alerts(al_states, al_log, exp), False)
+    expect("alerts: a blueprint automation unavailable fails",
+           check_alerts(_set(al_states, ALERT_AUTOMATIONS[1], "unavailable"), al_log, exp), True)
+    expect("alerts: a blueprint automation missing fails",
+           check_alerts(_drop(al_states, ALERT_AUTOMATIONS[0]), al_log, exp), True)
+    expect("alerts: no alert sent fails", check_alerts(al_states, al_log[1:], exp), True)
+    expect("alerts: an alert naming another session fails",
+           check_alerts(al_states, [{"name": ALERT_LOG_NAME, "message": "Claude is waiting on you: Session b"}], exp), True)
+
     # ---- Today card
     line = "**6** sessions · **%d** prompts · **3** PRs · **28** min waiting on you" % exp["prompts"]
     good = [{"path": "/x", "title": "Today", "result": line}]
@@ -770,6 +808,13 @@ def live():
             break
         time.sleep(10)
     record("plan source ok, weekly pace tight, session pace ok", check_plan(s1))
+
+    # ---- the alert blueprints: loaded, and the waiting one fired during the scenario
+    since = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 6 * 3600)) + "+00:00"
+    st, lb = ha.http("GET", "/api/logbook/" + since, token=ha.token())
+    record("alert blueprints loaded; the waiting alert named the waiting session",
+           check_alerts(states(), lb if st == 200 else [], exp)
+           + ([] if st == 200 else ["GET /api/logbook: %s %s" % (st, lb)]))
 
     # ---- repairs and the log, last, so they cover everything above
     issues = ha.ws([{"type": "repairs/list_issues"}])[0]["result"]["issues"]

@@ -25,7 +25,7 @@ The phases:
 | Phase | What it runs |
 |---|---|
 | `selftest` | `check.py --self-test`: every check against synthetic good and bad input. No Home Assistant needed. |
-| `up` | `demo/up.sh`: the containers, onboarding, MQTT, the history explorer card, the package and the dashboard. |
+| `up` | `demo/up.sh`: the containers, onboarding, MQTT, the history explorer card, the package, the dashboard and an automation from each alert blueprint. |
 | `scenario` | `demo/scenario.sh` with `CF_DEMO_FAST=1`: the invented day, about 90 seconds. |
 | `check` | `check.py`: the assertions below. |
 | `shots` | `demo/shots.sh`: screenshots into `demo/out/` (needs Chrome). Not in the default run. |
@@ -60,6 +60,7 @@ and bad cases, each of which must fail.
 | **Plan usage** | the plan source is not `ok`, the weekly pace not `tight` (the scenario puts the weekly gauge in the yellow), or the session pace not `ok` | self-test: a stale source, weekly `ok`, session `unknown` |
 | **Every markdown card renders** | any of the dashboard's markdown templates (all three views, phone-only cards included) errors with `strict: true` and `report_errors: true` over the websocket, or fewer than 10 cards are found | **live**: `{{ states.sensor.x.attributes.missing.value }}` goes through the same code path first and must come back as an error, and a trivial template must come back clean; self-test: each kind of error reply, and a card walk that must find nested and phone-only cards |
 | **Dashboard config** | a history explorer "by day" / "per day" bar graph lacks `interval: daily` inside `options`; `interval` sits on the graph itself (where the card silently ignores it: a real bug, once); any card, graph, graph option, chart entity, visibility condition, section or view has a key its card does not read | self-test: `interval` at graph level, a by-day bar with no interval, a misspelt markdown key, `line_mode` for `lineMode`, an unknown graph option, a stray visibility key, a stray key on a nested card |
+| **Alert blueprints** | either automation made from the two blueprints in `blueprints/` is not `on` (HA could not load it), or the waiting alert did not fire during the scenario naming the session left waiting. `up.sh` installs both with a logbook entry as the action, since the demo has no phone | self-test: an automation unavailable, one missing, no alert sent, an alert naming another session |
 | **Repairs** | any repair issue from `template` or `mqtt`, or one naming Claude | self-test: a `template` and an `mqtt` issue fail, an unrelated one passes |
 | **Home Assistant's log** | any `ERROR` or `CRITICAL`; any `WARNING` from Claude Fleet's templates, automations, scripts or MQTT entities (by logger, or naming Claude). The one allowed warning is "Template loop detected", which HA handles itself | self-test: synthetic lines for each (an ERROR with a traceback, a template error, an MQTT "Erroneous JSON", an automation warning, a CRITICAL, an error in a format nobody parses); HA's normal noise, a Template loop and ANSI colour codes must pass |
 
@@ -85,7 +86,7 @@ ignored: that is the point.
 artifact if everything passed; Home Assistant's and the scenario's logs as an artifact if
 anything failed; and always `down`. Thirty minutes at most.
 
-It runs on every push to `main` and every pull request touching `homeassistant/`, `hooks/`,
+It runs on every push to `main` and every pull request touching `homeassistant/`, `blueprints/`, `hooks/`,
 `install.sh`, `scripts/` or `tests/e2e/`, against the pinned Home Assistant; weekly against
 `stable` and `beta`, to catch a new Home Assistant release breaking the templates before users
 do; and by hand (Actions → e2e → Run workflow), with a choice of the three.

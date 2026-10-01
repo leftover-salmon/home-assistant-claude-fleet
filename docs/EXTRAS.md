@@ -31,6 +31,35 @@ health, and the Sessions tab warns when it stops reporting. The burn rate, time 
 today's peak are derived from those four, so every source gets the same arithmetic. Without
 one, the plan cards hide themselves.
 
+## Alerts
+
+Claude Fleet sends nothing to your phone by itself: what deserves a buzz, and where, is
+yours to decide, as usual in Home Assistant. Two blueprints make the common ones a couple of
+clicks. Import one with its button (or Settings → Automations & scenes → Blueprints →
+Import blueprint, with the file's GitHub link), then **Create automation** from it and pick
+your phone. Each sends to phones with the Home Assistant Companion app, or runs any other
+actions you choose (another notifier, a speaker, a light), and a tap on it opens the
+dashboard.
+
+**A session is waiting on you.** When a session has waited a couple of minutes (you choose
+how long), it names the waiting sessions: "Fix flaky login test (laptop)". You get a new
+alert only when someone new starts waiting, and it disappears from the phone once nobody is.
+
+[![Open your Home Assistant instance and show the blueprint import dialog with this blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fleftover-salmon%2Fhome-assistant-claude-fleet%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fclaude_fleet%2Fsession_waiting.yaml)
+
+**Plan limits running hot.** When the session or weekly limit is on course to run out before
+it resets, using the same pace that colours the gauges: tight (yellow) or over (red), your
+choice. "21% used, on course for 96% by the reset in 3h 53m." It alerts only when things
+get worse, never on the way back down or after a restart, and a limit hovering around the
+line stays quiet for an hour (you choose) before alerting again. Needs [plan usage](#plan-usage).
+
+[![Open your Home Assistant instance and show the blueprint import dialog with this blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fleftover-salmon%2Fhome-assistant-claude-fleet%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fclaude_fleet%2Fplan_limits.yaml)
+
+Both are plain Home Assistant automations once created: change them, or copy the triggers
+into your own. The sensors they read are `sensor.claude_sessions_waiting`,
+`binary_sensor.claude_anyone_waiting`, `sensor.claude_session_pace` and
+`sensor.claude_weekly_pace`.
+
 ## The status light
 
 For a plain smart bulb, set `STATUS LIGHT` in `claude_fleet.yaml` to the bulb's entity id and

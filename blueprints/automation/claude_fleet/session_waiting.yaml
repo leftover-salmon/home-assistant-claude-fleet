@@ -1,0 +1,130 @@
+blueprint:
+  name: "Claude Fleet: a session is waiting on you"
+  description: >
+    Sends a notification when a Claude Code session has been waiting on you for a few
+    minutes, naming the sessions, and withdraws it once nobody is waiting any more.
+    Needs the Claude Fleet package. Send it to phones with the Home Assistant Companion
+    app, or to anything else under "Other actions".
+  domain: automation
+  author: Michael Dosik
+  source_url: https://github.com/leftover-salmon/home-assistant-claude-fleet/blob/main/blueprints/automation/claude_fleet/session_waiting.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    phones:
+      name: Phones
+      description: >
+        Companion app devices to notify. Leave empty if you only use "Other actions".
+      default: []
+      selector:
+        device:
+          multiple: true
+          filter:
+            - integration: mobile_app
+    delay:
+      name: Wait before alerting
+      description: >
+        How long a session must keep waiting before you're told, so the ones you answer
+        straight away don't buzz. 0 alerts at once.
+      default: 2
+      selector:
+        number:
+          min: 0
+          max: 60
+          unit_of_measurement: min
+          mode: box
+    withdraw:
+      name: Withdraw when answered
+      description: Remove the notification from the phones once nobody is waiting.
+      default: true
+      selector:
+        boolean: {}
+    extra_actions:
+      name: Other actions
+      description: >
+        Anything else to run when the alert fires: another notifier, a speaker, a light.
+        The text is in the variables title and message, for example
+        "{{ message }}" in a notification's message field.
+      default: []
+      selector:
+        action: {}
+
+mode: queued
+max_exceeded: silent
+
+triggers:
+  # The count has held for the delay. Rising = someone new is waiting.
+  - trigger: state
+    entity_id: sensor.claude_sessions_waiting
+    to: ~                       # state changes only, never attribute-only updates
+    for:
+      minutes: !input delay
+    id: waiting
+  - trigger: state
+    entity_id: binary_sensor.claude_anyone_waiting
+    from: "on"
+    to: "off"
+    id: answered
+
+variables:
+  phones: !input phones
+  withdraw: !input withdraw
+  tag: claude-fleet-waiting
+  title: Claude is waiting on you
+  # "Fix flaky login test (laptop)", one per waiting session, oldest-named first
+  message: >-
+    {%- set w = states.sensor | selectattr('attributes.claude_session', 'defined')
+                | selectattr('state', 'eq', 'needs_input') | list %}
+    {%- set names = namespace(l=[]) %}
+    {%- for s in w %}
+    {%- set name = s.attributes.get('label') or s.attributes.get('repo') or 'a session' %}
+    {%- set where = s.attributes.get('machine') %}
+    {%- set names.l = names.l + [name ~ (' (' ~ where ~ ')' if where else '')] %}
+    {%- endfor %}
+    {%- if names.l | count == 0 %}A session is waiting on you.
+    {%- elif names.l | count <= 3 %}{{ names.l | join(', ') }}
+    {%- else %}{{ names.l[:3] | join(', ') }} and {{ names.l | count - 3 }} more
+    {%- endif %}
+
+conditions:
+  - condition: template
+    value_template: >-
+      {%- if trigger.id == 'answered' %}{{ withdraw and phones | count > 0 }}
+      {%- else %}
+      {#- A restart passes through unknown/unavailable: not a new waiter -#}
+      {{ trigger.from_state.state | is_number and trigger.to_state.state | is_number
+         and trigger.to_state.state | int > trigger.from_state.state | int }}
+      {%- endif %}
+
+actions:
+  - if:
+      - condition: trigger
+        id: answered
+    then:
+      - repeat:
+          for_each: "{{ phones }}"
+          sequence:
+            # the Companion app's notify action is named after the device's
+            # original name, which device_attr 'name' keeps through a rename
+            - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+              continue_on_error: true
+              data:
+                message: clear_notification
+                data:
+                  tag: "{{ tag }}"
+    else:
+      - repeat:
+          for_each: "{{ phones }}"
+          sequence:
+            - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+              continue_on_error: true
+              data:
+                title: "{{ title }}"
+                message: "{{ message }}"
+                data:
+                  tag: "{{ tag }}"
+                  group: claude-fleet
+                  url: /claude-fleet/sessions
+                  clickAction: /claude-fleet/sessions
+      - choose: []
+        default: !input extra_actions

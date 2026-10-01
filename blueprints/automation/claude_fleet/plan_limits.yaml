@@ -1,0 +1,168 @@
+blueprint:
+  name: "Claude Fleet: plan limits running hot"
+  description: >
+    Sends a notification when your Claude plan's session (5-hour) or weekly limit is on
+    course to run out before it resets. It uses Claude Fleet's pace sensors, the same
+    ones that colour the dashboard's gauges, so "tight" means yellow and "over" means
+    red. It alerts only when things get worse, never on the way back down.
+    Needs the Claude Fleet package and a plan-limits integration (such as Clawdmeter or
+    Claude Usage); without one the pace is unknown and this never fires.
+  domain: automation
+  author: Michael Dosik
+  source_url: https://github.com/leftover-salmon/home-assistant-claude-fleet/blob/main/blueprints/automation/claude_fleet/plan_limits.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    phones:
+      name: Phones
+      description: >
+        Companion app devices to notify. Leave empty if you only use "Other actions".
+      default: []
+      selector:
+        device:
+          multiple: true
+          filter:
+            - integration: mobile_app
+    pools:
+      name: Which limits
+      default: [session, weekly]
+      selector:
+        select:
+          multiple: true
+          options:
+            - label: Session (5-hour)
+              value: session
+            - label: Weekly
+              value: weekly
+    level:
+      name: Alert at
+      description: >
+        Tight (yellow): at this rate the session ends above 90%, or the week is ahead of
+        pace or has less headroom than one heavy day. Over (red): at this rate it runs
+        out before it resets.
+      default: tight
+      selector:
+        select:
+          options:
+            - label: Tight (yellow) and over (red)
+              value: tight
+            - label: Over (red) only
+              value: over
+    delay:
+      name: Wait before alerting
+      description: How long the pace must stay there first, to ride out a brief spike.
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 60
+          unit_of_measurement: min
+          mode: box
+    cooldown:
+      name: Quiet period
+      description: >
+        A new "tight" alert needs that limit to have been back at ok for at least this
+        long, so a pace hovering around the line doesn't buzz all day. Each limit has its
+        own, and an "over" alert always goes through.
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 1440
+          unit_of_measurement: min
+          mode: box
+    extra_actions:
+      name: Other actions
+      description: >
+        Anything else to run when the alert fires: another notifier, a speaker, a light.
+        The text is in the variables title and message, and the limit (session or
+        weekly) in pool.
+      default: []
+      selector:
+        action: {}
+
+mode: queued
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: sensor.claude_session_pace
+    to: [tight, over]
+    for:
+      minutes: !input delay
+    id: session
+  - trigger: state
+    entity_id: sensor.claude_weekly_pace
+    to: [tight, over]
+    for:
+      minutes: !input delay
+    id: weekly
+
+variables:
+  phones: !input phones
+  pools: !input pools
+  level: !input level
+  cooldown: !input cooldown
+  rank: {ok: 0, tight: 1, over: 2}
+  pool: "{{ trigger.id }}"
+  pace: "{{ trigger.to_state.state }}"
+  title: >-
+    Claude {{ 'session' if pool == 'session' else 'weekly' }} limit:
+    {{ 'running out' if pace == 'over' else 'running hot' }}
+  message: >-
+    {%- macro span(sec) -%}
+    {%- set m = ([sec, 0] | max / 60) | int -%}
+    {%- if m >= 1440 %}{{ m // 1440 }}d {{ (m % 1440) // 60 }}h
+    {%- elif m >= 60 %}{{ m // 60 }}h {{ m % 60 }}m
+    {%- else %}{{ m }}m{% endif -%}
+    {%- endmacro -%}
+    {%- if pool == 'session' %}
+    {%- set use = states('sensor.claude_plan_session_usage') | float(0) | round(0) | int %}
+    {%- set proj = state_attr('sensor.claude_session_pace', 'projected_at_reset') %}
+    {%- set left = (states('sensor.claude_plan_session_resets_in') | float(0)) * 60 %}
+    {%- if use >= 100 %}Session limit reached. It resets in {{ span(left) }}.
+    {%- else %}{{ use }}% used, on course for {{ proj if proj is number else '?' }}% by the reset in {{ span(left) }}.
+    {%- endif %}
+    {%- else %}
+    {%- set use = states('sensor.claude_plan_weekly_usage') | float(0) | round(0) | int %}
+    {%- set r = as_datetime(states('sensor.claude_plan_weekly_reset')) %}
+    {%- set left = (as_timestamp(r) - as_timestamp(now())) if r else 0 %}
+    {%- set gone = (100 - 100 * left / (7 * 86400)) | round(0) | int %}
+    {%- if use >= 100 %}Weekly limit reached. It resets in {{ span(left) }}.
+    {%- else %}{{ use }}% used with {{ gone }}% of the week gone; it resets in {{ span(left) }}.
+    {%- endif %}
+    {%- endif %}
+
+conditions:
+  - condition: template
+    value_template: "{{ pool in pools }}"
+  # only when it gets worse: ok -> tight, ok -> over, tight -> over. Coming from
+  # unknown/unavailable (a restart, the plan source catching up) is not news.
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state.state in rank and rank[pace] > rank[trigger.from_state.state]
+         and rank[pace] >= rank[level] }}
+  # the quiet period, per limit: how long it had been ok before this change
+  - condition: template
+    value_template: >-
+      {{ pace == 'over' or trigger.from_state.state != 'ok'
+         or (trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() >= cooldown * 60 }}
+
+actions:
+  - repeat:
+      for_each: "{{ phones }}"
+      sequence:
+        # the Companion app's notify action is named after the device's original
+        # name, which device_attr 'name' keeps through a rename
+        - action: "notify.mobile_app_{{ device_attr(repeat.item, 'name') | slugify }}"
+          continue_on_error: true
+          data:
+            title: "{{ title }}"
+            message: "{{ message }}"
+            data:
+              tag: "claude-fleet-{{ pool }}-limit"
+              group: claude-fleet
+              url: /claude-fleet/sessions
+              clickAction: /claude-fleet/sessions
+  - choose: []
+    default: !input extra_actions

@@ -13,9 +13,9 @@ on:
         default: pinned
   push:
     branches: [main]
-    paths: ["homeassistant/**", "hooks/**", "install.sh", "scripts/**", "tests/e2e/**", ".github/workflows/e2e.yml"]
+    paths: ["homeassistant/**", "blueprints/**", "hooks/**", "install.sh", "scripts/**", "tests/e2e/**", ".github/workflows/e2e.yml"]
   pull_request:
-    paths: ["homeassistant/**", "hooks/**", "install.sh", "scripts/**", "tests/e2e/**", ".github/workflows/e2e.yml"]
+    paths: ["homeassistant/**", "blueprints/**", "hooks/**", "install.sh", "scripts/**", "tests/e2e/**", ".github/workflows/e2e.yml"]
   # weekly, against HA stable and beta: a new release breaking the templates
   # should show up here before it shows up for users
   schedule:
