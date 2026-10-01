@@ -647,14 +647,15 @@ def cmd_prepare():
     dump(os.path.join(OUT, "stats.json"), stats)
     dump(os.path.join(OUT, "live.json"), dict(live, prepared=now.isoformat()))
     dump(os.path.join(OUT, "plan.json"), planh)
-    dump(os.path.join(OUT, "restore.json"), restore_entries(now, daily, planh, stats))
+    dump(os.path.join(OUT, "restore.json"), restore_entries(now, daily, planh, stats,
+                                                          sum(p["tokens"]["output"] for p in plan)))
     print("  ok    %d sessions, %.1fM tokens today, cache hit %s%%, RTK kept out %dk (%s%% of new context)"
           % (len(plan), sum(v["total"] for v in live_fam.values()) / 1e6, live["hit"],
              saved // 1000, live["rtk_share"]))
 
 
 # ---- restore state: records and the other day-scoped trigger sensors -------------
-def restore_entries(now, daily, planh, stats):
+def restore_entries(now, daily, planh, stats, today_output):
     today = now.date().isoformat()
     past = {d: v for d, v in daily.items() if d != today}
 
@@ -672,6 +673,9 @@ def restore_entries(now, daily, planh, stats):
         "prs_day": {"value": 6, "label": "#196, #199, #201, #1017, #1020, #52", "id": d_prs, "at": at(d_prs, 17, 58)},
         "prompts_day": {"value": 164, "label": "", "id": busiest, "at": at(busiest, 18, 31)},
         "tokens_day": {"value": past[busiest]["tokens"], "label": "", "id": busiest, "at": at(busiest, 23, 58)},
+        # below today's output on purpose: the check asserts that today overtakes
+        # it with exactly the sessions' output, which proves the record is fed
+        "output_day": {"value": int(today_output * 0.8), "label": "", "id": busiest, "at": at(busiest, 23, 58)},
         "solo_run": {"value": 163, "label": "Port the CSV importer to streaming",
                      "id": "x@" + d_solo, "at": at(d_solo, 14, 5)},
         "longest_wait": {"value": 71, "label": "Review the schema migration plan",

@@ -60,8 +60,8 @@ alert) at 6 PM: sessions, prompts, PRs and time spent waiting on you, one line p
 Each day's replaces the last, and days with no sessions are skipped. Switch it off, or change
 the time, on the dashboard's **Setup** tab.
 
-**Personal records** (`sensor.claude_fleet_records`) keep six bests forever: most sessions
-at once, most PRs, prompts and tokens in a day, the longest solo run (one session working
+**Personal records** (`sensor.claude_fleet_records`) keep seven bests forever: most sessions
+at once, most PRs, prompts, tokens and output tokens in a day, the longest solo run (one session working
 without needing you), and the longest you kept one waiting. A solo run only counts while
 the session is still reporting, so a laptop asleep mid-task cannot hold the record.
 

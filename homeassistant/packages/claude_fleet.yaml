@@ -920,12 +920,18 @@ template:
           {%- endfor %}
         {%- endif %}
         {%- set prs = ns.prs | unique | sort | list %}
+        {#- output alone: total tokens are ~98% cache reads, the context re-read every
+            turn, so the tokens record measures how long contexts got; what the
+            models actually wrote is the measure of work -#}
+        {%- set bd = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+        {%- set out = (bd.get('output', 0) if bd is mapping else 0) | int(0) %}
         {#- `id` names the RUN a candidate belongs to: a day for the daily records,
             one session in one stretch of one state for the durations. -#}
         {{ {'concurrent': {'value': states('sensor.claude_sessions_running') | int(0), 'label': '', 'id': today},
             'prs_day':    {'value': prs | count, 'label': prs | join(', '), 'id': today},
             'prompts_day': {'value': ns.prompts, 'label': '', 'id': today},
             'tokens_day': {'value': states('sensor.claude_tokens_today') | int(0), 'label': '', 'id': today},
+            'output_day': {'value': out, 'label': '', 'id': today},
             'solo_run':   {'value': ns.solo, 'label': ns.solo_l, 'id': ns.solo_id},
             'longest_wait': {'value': ns.wait, 'label': ns.wait_l, 'id': ns.wait_id}} }}
     sensor:
@@ -958,7 +964,7 @@ template:
           # A solo run in progress beats itself every minute, and a busy day beats
           # its own prompt count with every prompt; comparing the run id is what
           # makes those one event and not hundreds. A record held at zero is not
-          # beaten either, or the first day would announce all five at once.
+          # beaten either, or the first day would announce all seven at once.
           last_broken: >
             {%- set prev = this.attributes.get('records', {}) %}
             {%- set prev = prev if prev is mapping else {} %}

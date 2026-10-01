@@ -155,6 +155,7 @@ automation:
                         'prs_day': 'most PRs opened in one day',
                         'prompts_day': 'most prompts in one day',
                         'tokens_day': 'most tokens the fleet has spent in one day',
+                        'output_day': 'most output tokens the models have written in one day',
                         'solo_run': 'longest one session has worked without needing me, in minutes',
                         'longest_wait': 'longest I have left a session waiting on me, in minutes'} -%}
         a personal record just fell: {{ what.get(k, 'a fleet record') }}. It is now

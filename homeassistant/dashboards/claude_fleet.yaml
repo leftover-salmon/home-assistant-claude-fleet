@@ -622,6 +622,7 @@ views:
                                   ('prs_day', 'Most PRs in a day', 'PRs'),
                                   ('prompts_day', 'Most prompts in a day', 'prompts'),
                                   ('tokens_day', 'Most tokens in a day', 'tok'),
+                                  ('output_day', 'Most output in a day', 'tok'),
                                   ('solo_run', 'Longest solo run', 'dur'),
                                   ('longest_wait', 'Longest you kept one waiting', 'dur')] %}
                   {%- if r %}
@@ -648,7 +649,7 @@ views:
                   No records yet. They start counting now.
                   {%- endif %}
 
-                  <details><summary>What do these mean?</summary><ul><li><b>Longest solo run</b>: one session working without needing you. It counts only while the session keeps reporting, so a laptop asleep mid-task cannot hold it.</li><li><b>Longest you kept one waiting</b>: from a session asking to you answering.</li><li><b>Most tokens in a day</b>: every session, subagents included.</li><li>🏆 = set today. Records are kept forever.</li></ul></details>
+                  <details><summary>What do these mean?</summary><ul><li><b>Longest solo run</b>: one session working without needing you. It counts only while the session keeps reporting, so a laptop asleep mid-task cannot hold it.</li><li><b>Longest you kept one waiting</b>: from a session asking to you answering.</li><li><b>Most tokens in a day</b>: every session, subagents included. Nearly all of it is cache reads, the conversation re-read on every turn, so it mostly measures how long contexts got.</li><li><b>Most output in a day</b>: only what the models wrote, the better measure of work.</li><li>🏆 = set today. Records are kept forever.</li></ul></details>
 
           # On a phone the two stack: side by side, the records table's Best column
           # was cut off and its names wrapped one word per line.

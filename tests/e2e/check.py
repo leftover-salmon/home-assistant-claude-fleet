@@ -156,12 +156,13 @@ def expected_from(sessions, gen_sessions):
     """What HA should show, from what gen.py generated: sessions.json (per-session
     tokens as the hook counts them, the seeded counters, the final state) and
     gen.SESSIONS (the PRs, and whether each was opened today)."""
-    exp = {"sessions": {}, "tokens": 0, "prompts": 0, "prs": set()}
+    exp = {"sessions": {}, "tokens": 0, "output": 0, "prompts": 0, "prs": set()}
     for p in sessions:
         k = p["tokens"]
         exp["sessions"][p["sid"]] = {"label": p["label"], "final": p["final"], "stale": p["stale"],
                                      "prompts": p["prompts"], "tokens": k}
         exp["tokens"] += k["input"] + k["output"] + k["cache_read"] + k["cache_write"]
+        exp["output"] += k["output"]
         exp["prompts"] += p["prompts"]
     for s in gen_sessions:
         for num, ago in s.get("prs", []):
@@ -176,6 +177,25 @@ def expected_from(sessions, gen_sessions):
              "working" if exp["counts"]["working"] else "idle" if exp["counts"]["idle"] else "none")
     exp["fleet_status"] = worst
     return exp
+
+
+def check_records(states, exp, today):
+    """The output record: the demo seeds a past one BELOW today's output, so today
+    must overtake it with exactly the sessions' summed output. That proves the record
+    is fed from today's output, not merely present."""
+    rec = next((s for s in states if s["entity_id"] == "sensor.claude_fleet_records"), None)
+    r = (rec or {}).get("attributes", {}).get("records")
+    if not isinstance(r, dict):
+        return ["sensor.claude_fleet_records has no records table"]
+    x = r.get("output_day")
+    if not isinstance(x, dict):
+        return ["no 'output_day' record (most output in a day)"]
+    out = []
+    if int(x.get("value", -1)) != exp["output"]:
+        out.append("output record = %s, expected today's output %d" % (x.get("value"), exp["output"]))
+    if x.get("id") != today:
+        out.append("output record set on %s, expected today (%s) to have overtaken the seeded one" % (x.get("id"), today))
+    return out
 
 
 def check_sessions(states, exp):
@@ -450,6 +470,7 @@ def load_dashboard(path=DASHBOARD):
 
 # =================================================================== self-test
 BROKEN_TEMPLATE = "{{ states.sensor.x.attributes.missing.value }}"
+SELFTEST_DAY = "2026-09-30"
 
 
 def _synthetic():
@@ -483,6 +504,9 @@ def _synthetic():
     for i in range(30):
         fixed.setdefault("sensor.claude_extra_%d" % i, "0")
     states += [{"entity_id": k, "state": v, "attributes": {}} for k, v in fixed.items()]
+    states = [s for s in states if s["entity_id"] != "sensor.claude_fleet_records"]
+    states.append({"entity_id": "sensor.claude_fleet_records", "state": "1", "attributes": {"records": {
+        "output_day": {"value": exp["output"], "label": "", "id": SELFTEST_DAY, "at": SELFTEST_DAY + "T12:00:00"}}}})
     return sessions, gen_sessions, exp, states
 
 
@@ -608,6 +632,13 @@ def self_test():
     }
     for name, st in bad.items():
         expect("sessions: %s fails" % name, check_sessions(st, exp), True)
+    expect("records: today's output overtaking the seed passes", check_records(states, exp, SELFTEST_DAY), False)
+    rset = lambda **o: _set(states, "sensor.claude_fleet_records", records={"output_day": dict(
+        {"value": exp["output"], "label": "", "id": SELFTEST_DAY}, **o)})
+    expect("records: the output record off by one fails", check_records(rset(value=exp["output"] + 1), exp, SELFTEST_DAY), True)
+    expect("records: the seed still standing (not overtaken) fails", check_records(rset(id="2026-09-12"), exp, SELFTEST_DAY), True)
+    expect("records: no output record fails", check_records(_set(states, "sensor.claude_fleet_records", records={}), exp, SELFTEST_DAY), True)
+    expect("records: no records table fails", check_records(_drop(states, "sensor.claude_fleet_records"), exp, SELFTEST_DAY), True)
     expect("expected: yesterday's PR is not today's", [] if exp["prs"] == {"#7", "#9", "#10"} else [exp["prs"]], False)
     expect("plan: ok / tight / ok passes", check_plan(states), False)
     expect("plan: a stale source fails", check_plan(_set(states, "sensor.claude_plan_source", "stale")), True)
@@ -685,6 +716,7 @@ def live():
     # a second and skips while a loop is detected, so right after the scenario's
     # last event they can lag it by a few seconds: wait for them to settle, then
     # report whatever is still wrong.
+    # The records sensor re-renders once a minute, so it gets up to 75 s more.
     end = time.time() + float(os.environ.get("CF_CHECK_SETTLE", "60"))
     while True:
         s0 = states()
@@ -694,6 +726,14 @@ def live():
         time.sleep(3)
     record("package loaded (key entities)", f_ent)
     record("sessions, counts and the day's sums", f_ses)
+    today = next((s["attributes"].get("day") for s in s0 if s["attributes"].get("claude_session")), "")
+    end = time.time() + 75
+    while True:
+        f_rec = check_records(states(), exp, today)
+        if not f_rec or time.time() > end:
+            break
+        time.sleep(5)
+    record("personal records: today's output overtook the seeded output record", f_rec)
 
     # ---- markdown templates, strict, with the live controls first: a broken
     # template must come back as an error through this exact path, a trivial one
