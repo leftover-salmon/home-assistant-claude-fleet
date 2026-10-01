@@ -163,6 +163,17 @@ template:
           {%- endfor %}
           {{ (ss | count == 0) or ns.old }}
 
+  # The version of the Home Assistant files: this package and the dashboard, which
+  # carries the same number and warns on the Setup tab when the two differ (one
+  # file copied, the other not). The hook has its own version, in plugin.json.
+  # Change either file, bump both and add a CHANGELOG.md entry; the e2e test
+  # fails if the three disagree.
+  - sensor:
+      - name: Claude Fleet package version
+        unique_id: claude_fleet_package_version
+        icon: mdi:tag-outline
+        state: "0.2.0"
+
   # ---- derived from the four above --------------------------------------------
   - sensor:
       - name: Claude plan session resets in

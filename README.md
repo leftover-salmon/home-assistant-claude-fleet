@@ -214,12 +214,17 @@ Only sessions started after installing report.
 
 ## Updating
 
+The hook and the Home Assistant files have separate version numbers, and the
+[changelog](CHANGELOG.md) says which changed and what to copy. To hear about new versions,
+**Watch → Custom → Releases** on this repo.
+
 - **Plugin:** `/plugin` → **Marketplaces** → claude-fleet → **Update**, then update the plugin.
 - **Script:** `cd ~/home-assistant-claude-fleet && git pull && ./install.sh`.
 - **Home Assistant:** copy the package and dashboard again, then restart (for the package) or
   refresh the page (for the dashboard).
 
-The Setup tab warns about any computer on an out-of-date hook.
+The Setup tab shows the Home Assistant files' version, warns when the package and the
+dashboard don't match, and flags any computer whose hook is behind the others.
 
 ## More
 

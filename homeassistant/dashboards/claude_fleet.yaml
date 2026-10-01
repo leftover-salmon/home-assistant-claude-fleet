@@ -1235,6 +1235,15 @@ views:
               {%- else %}
               <ha-alert alert-type="success" title="Reporting">{{ ss | count }} session{{ '' if ss | count == 1 else 's' }} from {{ macs | count }} Mac{{ '' if macs | count == 1 else 's' }}: {{ macs | join(', ') }}.</ha-alert>
               {%- endif %}
+              {#- this dashboard's version; the package's sensor must say the same.
+                  Bump with the package (see the sensor's comment there) -#}
+              {%- set dash_v = '0.2.0' %}
+              {%- set pkg_v = states('sensor.claude_fleet_package_version') %}
+              {%- if pkg_v != dash_v %}
+              <ha-alert alert-type="warning" title="The package and the dashboard don't match">This dashboard is version {{ dash_v }}, and the package is {{ pkg_v if pkg_v not in bad else 'older than that (it has no version)' }}. Copy both <code>claude_fleet.yaml</code> files from the same download (one goes in <code>/config/packages/</code>, the other in <code>/config/dashboards/</code>), then restart.</ha-alert>
+              {%- endif %}
+
+              <small>Home Assistant files {{ dash_v }} · <a href="https://github.com/leftover-salmon/home-assistant-claude-fleet/blob/main/CHANGELOG.md">What's new</a> · to hear about new versions, watch the repo's releases on GitHub.</small>
 
               **Optional extras.** Each appears on the dashboard once it's there; none needs the others.
 
@@ -1250,6 +1259,7 @@ views:
               | {{ '✅' if ns.sum else '➖' }} | **"Working on" summaries** | One line per session saying what it's doing, written by Haiku from the transcript. | {{ 'Found.' if ns.sum else 'Written by <code>claude -p</code> after a session finishes a turn; they appear within minutes, unless they are turned off (<code>SUMMARY_ENABLED=0</code>, or the plugin\'s summaries option).' }} |
               | {{ '✅' if rtk else '➖' }} | **RTK savings** | How much command output <a href="https://github.com/rtk-ai/rtk">RTK</a> kept out of Claude's context, per Mac and by day. | {{ 'Found.' if rtk else 'Install RTK on a Mac and run <code>rtk init -g</code>; the hook finds it.' }} |
               | {{ '✅' if clock else '➖' }} | **Desk display** | Fleet status on an AWTRIX pixel clock: a corner light in the fleet's colour, "X needs you" alerts, and plan usage screens. | {{ 'Found.' if clock else ('Package installed, no clock found yet. Point an AWTRIX NG clock at your MQTT broker with Home Assistant discovery on.' if clock_pkg else 'Add <code>claude_fleet_awtrix.yaml</code> to your packages, for an AWTRIX NG clock (a Ulanzi TC001 works).') }} |
+              | ➖ | **Phone alerts** | A notification when a session is waiting on you, or a plan limit is running hot. | Two blueprints, a couple of clicks each: see <a href="https://github.com/leftover-salmon/home-assistant-claude-fleet/blob/main/docs/EXTRAS.md#alerts">Alerts</a>. |
               | ➖ | **Status light (bulb)** | The same colours on any smart bulb, for anyone without a pixel clock. | Set <code>STATUS LIGHT</code> in <code>claude_fleet.yaml</code> to the bulb's entity id. |
               | {{ '✅' if aside else '➖' }} | **The aside** | A dry one-line comment on the fleet, written by an LLM from the real numbers. | {{ 'Found.' if aside else ('Package installed; its first line comes once sessions are running.' if aside_pkg else 'Add <code>claude_fleet_quip.yaml</code> and give it an author: a script or a conversation agent.') }} |
               | {{ '✅' if recap == 'on' else '➖' }} | **Daily recap** | A notification in Home Assistant each evening: sessions, prompts, PRs, time spent waiting on you. Skipped on days with no sessions. | {{ ('On, at ' ~ recap_at ~ '.') if recap == 'on' else 'Off.' }} Switch it, or change the time, below. |

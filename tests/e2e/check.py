@@ -314,6 +314,63 @@ def check_alerts(states, logbook, exp):
     return out
 
 
+# ================================================================ versions
+# Two version numbers (CHANGELOG.md says why): the hook's, in plugin.json and
+# marketplace.json, and the Home Assistant files', in the package and the
+# dashboard. Each pair must agree, and the newest CHANGELOG entry for each must
+# name it, so a release cannot ship half-bumped or without its notes.
+PACKAGE = os.path.join(REPO, "homeassistant", "packages", "claude_fleet.yaml")
+CHANGELOG = os.path.join(REPO, "CHANGELOG.md")
+PLUGIN = os.path.join(REPO, ".claude-plugin", "plugin.json")
+MARKETPLACE = os.path.join(REPO, ".claude-plugin", "marketplace.json")
+VER = r"(\d+\.\d+\.\d+)"
+
+
+def _first(pattern, text):
+    m = re.search(pattern, text, re.M)
+    return m.group(1) if m else None
+
+
+def repo_versions(package, dashboard, changelog, plugin, marketplace):
+    """The version each file states, from the files' text (None where missing)."""
+    try:
+        mk = json.loads(marketplace)["plugins"][0].get("version")
+    except (ValueError, KeyError, IndexError):
+        mk = None
+    try:
+        pl = json.loads(plugin).get("version")
+    except ValueError:
+        pl = None
+    return {
+        "package": _first(r"name: Claude Fleet package version\n(?:.*\n){1,3}?\s+state: \"" + VER + "\"", package),
+        "dashboard": _first(r"set dash_v = '" + VER + "'", dashboard),
+        "changelog (Home Assistant files)": _first(r"^## Home Assistant files " + VER, changelog),
+        "plugin.json": pl,
+        "marketplace.json": mk,
+        "changelog (Hook)": _first(r"^## Hook " + VER, changelog),
+    }
+
+
+def check_versions(v):
+    out = []
+    for group in (("package", "dashboard", "changelog (Home Assistant files)"),
+                  ("plugin.json", "marketplace.json", "changelog (Hook)")):
+        got = {k: v.get(k) for k in group}
+        for k, x in got.items():
+            if not x:
+                out.append("no version found in %s" % k)
+        if len(set(x for x in got.values() if x)) > 1:
+            out.append("versions disagree: %s" % ", ".join("%s %s" % kv for kv in got.items()))
+    return out
+
+
+def read_repo_versions():
+    def rd(p):
+        with open(p) as f:
+            return f.read()
+    return repo_versions(rd(PACKAGE), rd(DASHBOARD), rd(CHANGELOG), rd(PLUGIN), rd(MARKETPLACE))
+
+
 # ======================================================= markdown templates
 def markdown_cards(config):
     """Every markdown card in a dashboard config, visible or not (phone-only
@@ -670,6 +727,23 @@ def self_test():
     expect("plan: weekly pace ok fails", check_plan(_set(states, "sensor.claude_weekly_pace", "ok")), True)
     expect("plan: session pace unknown fails", check_plan(_set(states, "sensor.claude_session_pace", "unknown")), True)
 
+
+    # ---- versions
+    def _v(**kw):
+        base = {"package": "0.2.0", "dashboard": "0.2.0", "changelog (Home Assistant files)": "0.2.0",
+                "plugin.json": "0.1.12", "marketplace.json": "0.1.12", "changelog (Hook)": "0.1.12"}
+        base.update(kw)
+        return base
+    expect("versions: all agreeing passes", check_versions(_v()), False)
+    expect("versions: dashboard bumped, package not, fails", check_versions(_v(dashboard="0.2.1")), True)
+    expect("versions: no changelog entry for the new version fails",
+           check_versions(_v(package="0.2.1", dashboard="0.2.1")), True)
+    expect("versions: plugin.json bumped, marketplace.json not, fails", check_versions(_v(**{"plugin.json": "0.1.13"})), True)
+    expect("versions: a file with no version fails", check_versions(_v(package=None)), True)
+    expect("versions: the repo's own files agree", check_versions(read_repo_versions()), False)
+    pkg_snip = 'x\n      - name: Claude Fleet package version\n        unique_id: v\n        icon: mdi:tag\n        state: "1.2.3"\n'
+    expect("versions: the package's version is found (1.2.3)",
+           [] if repo_versions(pkg_snip, "", "", "{}", "{}")["package"] == "1.2.3" else ["not found"], False)
     # ---- alert blueprints
     al_states = states + [{"entity_id": a, "state": "on", "attributes": {}} for a in ALERT_AUTOMATIONS]
     al_log = [{"name": ALERT_LOG_NAME, "message": "Claude is waiting on you: Session a"},
@@ -808,6 +882,13 @@ def live():
             break
         time.sleep(10)
     record("plan source ok, weekly pace tight, session pace ok", check_plan(s1))
+
+    # ---- versions: the repo's files agree, and HA loaded the package's
+    rv = read_repo_versions()
+    loaded = {x["entity_id"]: x["state"] for x in states()}.get("sensor.claude_fleet_package_version")
+    record("versions agree (repo files and changelog; the package HA loaded is %s)" % loaded,
+           check_versions(rv) + ([] if loaded == rv["package"] else
+                                 ["sensor.claude_fleet_package_version = %s, the package says %s" % (loaded, rv["package"])]))
 
     # ---- the alert blueprints: loaded, and the waiting one fired during the scenario
     since = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 6 * 3600)) + "+00:00"
