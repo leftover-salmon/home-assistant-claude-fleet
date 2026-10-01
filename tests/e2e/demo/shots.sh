@@ -35,10 +35,20 @@ export CDP_PORT="${CDP_PORT:-9333}"
 curl -s "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 \
   && die "something already listens on port $CDP_PORT (another headless Chrome?); set CDP_PORT"
 "$CHROME" ${SANDBOX[@]+"${SANDBOX[@]}"} --headless=new --disable-gpu --hide-scrollbars --no-first-run --no-default-browser-check \
-  --user-data-dir="$CF_DEMO_DIR/chrome" --remote-debugging-port="$CDP_PORT" about:blank >/dev/null 2>&1 &
+  --user-data-dir="$CF_DEMO_DIR/chrome" --remote-debugging-port="$CDP_PORT" about:blank \
+  >"$CF_DEMO_DIR/chrome.log" 2>&1 &
 CPID=$!
 trap 'kill $CPID 2>/dev/null; wait $CPID 2>/dev/null || true' EXIT
-for i in $(seq 1 30); do curl -s "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 && break; sleep 0.5; done
+# A cold Chrome on a CI runner has taken longer than the 15 s this used to allow,
+# and the screenshots then failed with "connection refused" (2026-10-01). Wait a
+# minute, and if it never answers, say so with Chrome's own output.
+up=
+for i in $(seq 1 120); do
+  curl -s "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1 && { up=1; break; }
+  kill -0 $CPID 2>/dev/null || break
+  sleep 0.5
+done
+[ -n "$up" ] || { tail -20 "$CF_DEMO_DIR/chrome.log" >&2; die "Chrome never answered on port $CDP_PORT (its log is above)"; }
 
 "$PY" "$DEMO/shots.py" "$OUTDIR" \
   sessions:sessions:1600 tokens:tokens:1600 setup:setup:1600 sessions-phone:sessions:390:phone
