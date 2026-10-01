@@ -62,8 +62,8 @@ into your own. The sensors they read are `sensor.claude_sessions_waiting`,
 
 ## Update check
 
-A new version of the Home Assistant files appears in **Settings → Updates**, beside Home
-Assistant's own, with its release notes and a link to it. Once a day (and at startup), Home
+When a new version of the Home Assistant files is out, a notification appears under the
+sidebar bell, once, with its release notes and what to copy. Once a day (and at startup), Home
 Assistant asks GitHub's public API for this project's newest "Home Assistant files"
 release. Nothing is sent but that request: no token, no account, and nothing about your
 setup. It is the only part of Claude Fleet that reaches the internet.
@@ -72,11 +72,15 @@ It's on by default. To stop it, turn off the **Update check** switch on the Setu
 stays off through restarts and updates. (The automation called "Claude · check GitHub for
 new versions" does the work; leave that one on, and use the switch.)
 
-There is no Install button. Updating means copying files into `/config`, which only code
-running inside Home Assistant could do, and Claude Fleet runs none: copy the files the
-release names, then restart. **Skip** works as for any update. Hook versions aren't
-included: Claude Code offers those itself, and the Setup tab flags a computer that is
-behind. Turning the switch off removes the entity.
+The version is also an update entity, `update.claude_fleet`, listed under **Settings →
+System → Updates** as "not installable". It has no Install button: updating means copying
+files into `/config`, which only code running inside Home Assistant could do, and Claude
+Fleet runs none. Copy the files the release names, then restart. That is also why it gets
+no badge on Settings: Home Assistant counts only updates it can install there, which is
+what the notification is for. **Skip** on the entity works as usual, and a skipped version
+is not announced. Hook versions aren't included: Claude Code offers those itself, and the
+Setup tab flags a computer that is behind. Turning the switch off removes the entity and
+any notification.
 
 ## The status light
 

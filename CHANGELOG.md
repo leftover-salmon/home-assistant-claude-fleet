@@ -12,10 +12,24 @@ Claude Fleet has two version numbers, because its two halves update separately:
 The blueprints have no version: Home Assistant fetches them from GitHub when you import one,
 and **Re-import blueprint** (in the blueprint's menu) gets the latest.
 
-To hear about new versions, Home Assistant shows them in Settings → Updates (unless you
-turn off the **Update check** on the Setup tab), or **Watch → Custom → Releases** on the
+To hear about new versions, Home Assistant posts a notification under the sidebar bell
+when one is out (unless you turn off the **Update check** on the Setup tab), or **Watch → Custom → Releases** on the
 [GitHub repo](https://github.com/leftover-salmon/home-assistant-claude-fleet): each version
 below is also a release there.
+
+## Home Assistant files 0.3.2 (2026-10-01)
+
+**To update:** copy `packages/claude_fleet.yaml` and `dashboards/claude_fleet.yaml` again,
+then restart. No hook update.
+
+- **A new version now gets a notification** under the sidebar bell, once, with its release
+  notes and what to copy. It isn't repeated, skips a version you **Skip**, and clears
+  itself once you've updated.
+- **A correction to 0.3.0 and 0.3.1,** which said new versions would show at the top of
+  Settings, with a badge. They don't: Home Assistant only counts updates it can install
+  there, and Claude Fleet's can't be installed from Home Assistant (that means copying
+  files). They are listed under **Settings → System → Updates**, as "not installable",
+  which is easy to miss; hence the notification.
 
 ## Home Assistant files 0.3.1 (2026-10-01)
 

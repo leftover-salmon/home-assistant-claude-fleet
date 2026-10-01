@@ -336,11 +336,22 @@ def check_alerts(states, logbook, exp):
 REPO_URL = "https://github.com/leftover-salmon/home-assistant-claude-fleet"
 
 
-def check_update(on, off, version, fresh_switch="on"):
+GOOD_UPDATE_NOTE = {"notification_id": "claude_fleet_update", "title": "Claude Fleet 0.3.1 is out"}
+
+
+def check_update(on, off, version, fresh_switch="on", note_older=GOOD_UPDATE_NOTE, note_after_off=None):
     """on: update.claude_fleet's state dict after switching on (None if it never
     appeared); off: the same after switching off (None if it is gone);
-    fresh_switch: the switch's state on the fresh install, before anything touched it."""
+    fresh_switch: the switch's state on the fresh install, before anything touched it;
+    note_older: the "new version" notification after pretending to run an older
+    version (None if none was posted); note_after_off: the same after switching off."""
     out = []
+    if not note_older:
+        out.append("no 'Claude Fleet … is out' notification after pretending to run an older version")
+    elif "is out" not in str(note_older.get("title", "")):
+        out.append("the update notification's title is %r" % note_older.get("title"))
+    if note_after_off:
+        out.append("the update notification is still there after switching the update check off")
     if fresh_switch != "on":
         out.append("input_boolean.claude_fleet_update_check = %s on a fresh install, expected on (the default)"
                    % fresh_switch)
@@ -787,6 +798,9 @@ def self_test():
            check_update(dict(u_on, attributes=dict(u_on["attributes"], latest_version="ha-files-v0.3.0")), None, "0.3.0"), True)
     expect("update: unavailable fails", check_update(dict(u_on, state="unavailable"), None, "0.3.0"), True)
     expect("update: off by default on a fresh install fails", check_update(u_on, None, "0.3.0", fresh_switch="off"), True)
+    expect("update: no notification for an older install fails", check_update(u_on, None, "0.3.0", note_older=None), True)
+    expect("update: the notification left after switching off fails",
+           check_update(u_on, None, "0.3.0", note_after_off={"title": "Claude Fleet 0.3.1 is out"}), True)
     gh_403 = "2026-10-01 14:12:44.731 WARNING (MainThread) [homeassistant.components.rest_command] Error. Url: https://api.github.com/repos/leftover-salmon/home-assistant-claude-fleet/releases?per_page=30. Status code 403. Payload: None\n"
     expect("log: GitHub rate-limiting the update check passes", check_log(GOOD_LOG + gh_403), False)
     expect("log: the update check's URL answering 404 fails", check_log(GOOD_LOG + gh_403.replace("403", "404")), True)
@@ -978,13 +992,29 @@ def live():
             time.sleep(2)
     st, sw = ha.http("GET", "/api/states/input_boolean.claude_fleet_update_check", token=ha.token())
     fresh = sw.get("state") if st == 200 else "missing"
+    def update_note():
+        ns = ha.ws([{"type": "persistent_notification/get"}])[0].get("result") or []
+        return next((n for n in ns if n["notification_id"] == "claude_fleet_update"), None)
+
+    def wait_note(pred, secs=45):
+        end = time.time() + secs
+        while True:
+            n = update_note()
+            if pred(n) or time.time() > end:
+                return n
+            time.sleep(2)
     switch("turn_on")
     u_on = wait(lambda u: u is not None)
+    # pretend to run an old version: the check runs again (it watches the package's
+    # version sensor) and must announce the newest release, whatever it is
+    ha.http("POST", "/api/states/sensor.claude_fleet_package_version", {"state": "0.0.1"}, token=ha.token())
+    n_older = wait_note(lambda n: n is not None)
     switch("turn_off")
     u_off = wait(lambda u: u is None)
+    n_off = wait_note(lambda n: n is None, 20)
     a = (u_on or {}).get("attributes", {})
     record("update check: on by default, adds update.claude_fleet (latest %s), off removes it" % a.get("latest_version"),
-           check_update(u_on, u_off, read_repo_versions()["package"], fresh))
+           check_update(u_on, u_off, read_repo_versions()["package"], fresh, n_older, n_off))
 
     # ---- repairs and the log, last, so they cover everything above
     issues = ha.ws([{"type": "repairs/list_issues"}])[0]["result"]["issues"]

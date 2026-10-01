@@ -85,7 +85,7 @@ Worth knowing before you install, because it's easy not to think about:
   and your settings except the password) is published, retained, to
   `claude/<machine>/diag/report`, so it can be read from the Home Assistant end.
 - **From Home Assistant, the update check:** once a day, Home Assistant asks GitHub's public
-  API for this project's newest release, so new versions show in Settings → Updates.
+  API for this project's newest release, so a new version gets a notification.
   Nothing about you or your setup is sent. It's on unless you turn it off: the **Update
   check** switch on the Setup tab.
 
@@ -220,8 +220,8 @@ Only sessions started after installing report.
 
 The hook and the Home Assistant files have separate version numbers, and the
 [changelog](CHANGELOG.md) says which changed and what to copy. To hear about new versions,
-Home Assistant shows them in Settings → Updates, unless you turn the update check off
-([details](docs/EXTRAS.md#update-check)), or **Watch → Custom → Releases** on this repo.
+Home Assistant posts a notification (the sidebar bell) when one is out, unless you turn
+the update check off ([details](docs/EXTRAS.md#update-check)), or **Watch → Custom → Releases** on this repo.
 
 - **Plugin:** `/plugin` → **Marketplaces** → claude-fleet → **Update**, then update the plugin.
 - **Script:** `cd ~/home-assistant-claude-fleet && git pull && ./install.sh`.

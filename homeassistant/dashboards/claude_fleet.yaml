@@ -1237,7 +1237,7 @@ views:
               {%- endif %}
               {#- this dashboard's version; the package's sensor must say the same.
                   Bump with the package (see the sensor's comment there) -#}
-              {%- set dash_v = '0.3.1' %}
+              {%- set dash_v = '0.3.2' %}
               {%- set pkg_v = states('sensor.claude_fleet_package_version') %}
               {%- if pkg_v != dash_v %}
               <ha-alert alert-type="warning" title="The package and the dashboard don't match">This dashboard is version {{ dash_v }}, and the package is {{ pkg_v if pkg_v not in bad else 'older than that (it has no version)' }}. Copy both <code>claude_fleet.yaml</code> files from the same download (one goes in <code>/config/packages/</code>, the other in <code>/config/dashboards/</code>), then restart.</ha-alert>
@@ -1265,7 +1265,7 @@ views:
               {%- set uc = states('input_boolean.claude_fleet_update_check') %}
               {%- set ue = states('update.claude_fleet') %}
               {%- set ul = state_attr('update.claude_fleet', 'latest_version') %}
-              | {{ '✅' if uc == 'on' else '➖' }} | **Update check** | New versions of these Home Assistant files in Settings → Updates, with their release notes. The one part of Claude Fleet that reaches the internet: once a day, Home Assistant asks GitHub for the newest release. | {{ ('Version ' ~ ul ~ ' is out: see Settings → Updates.' if ue == 'on' else ('Up to date.' if ue == 'off' else 'On; the first check is under way.')) if uc == 'on' else 'Off, so new versions are not shown. Switch it on below.' }} |
+              | {{ '✅' if uc == 'on' else '➖' }} | **Update check** | A notification under the sidebar bell when a new version of these Home Assistant files is out, with its release notes. The one part of Claude Fleet that reaches the internet: once a day, Home Assistant asks GitHub for the newest release. | {{ ('Version ' ~ ul ~ ' is out: see the notification under the bell, or Settings → System → Updates.' if ue == 'on' else ('Up to date.' if ue == 'off' else 'On; the first check is under way.')) if uc == 'on' else 'Off, so new versions are not shown. Switch it on below.' }} |
               | {{ '✅' if recap == 'on' else '➖' }} | **Daily recap** | A notification in Home Assistant each evening: sessions, prompts, PRs, time spent waiting on you. Skipped on days with no sessions. | {{ ('On, at ' ~ recap_at ~ '.') if recap == 'on' else 'Off.' }} Switch it, or change the time, below. |
 
               **Switches.** The ones below run in Home Assistant. Summaries, RTK and PR numbers are set on each Mac instead, in <code>~/.claude/ha-status.env</code> (<code>SUMMARY_ENABLED=0</code> turns summaries off): the hook only sends to Home Assistant, and never reads settings back.

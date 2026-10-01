@@ -51,6 +51,12 @@ input_text:
     name: Claude Fleet defaults applied
     icon: mdi:cog-outline
     max: 255
+  # The newest version the update check has announced with a notification, so
+  # each version is announced once, however often it checks.
+  claude_fleet_update_notified:
+    name: Claude Fleet update announced
+    icon: mdi:bell-check-outline
+    max: 32
 
 template:
   # ======================================================= PLAN USAGE SOURCE
@@ -199,7 +205,7 @@ template:
       - name: Claude Fleet package version
         unique_id: claude_fleet_package_version
         icon: mdi:tag-outline
-        state: "0.3.1"
+        state: "0.3.2"
 
   # ---- derived from the four above --------------------------------------------
   - sensor:
@@ -1277,7 +1283,7 @@ automation:
             - action: mqtt.publish
               data: { topic: "{{ repeat.item.base }}/state", payload: "", retain: true }
 
-  # ---- update check: an update entity in Settings → Updates ------------------
+  # ---- update check: a notification and an update entity for new versions -----
   # On by default ("Claude · defaults, once"); the Update check switch on the Setup
   # tab turns it off. This automation is the worker, not the switch: leave it on.
   # With input_boolean.claude_fleet_update_check on, ask GitHub once a day (and at
@@ -1328,6 +1334,8 @@ automation:
             data: { topic: "{{ disc }}", payload: "", retain: true }
           - action: mqtt.publish
             data: { topic: "{{ topic }}", payload: "", retain: true }
+          - action: persistent_notification.dismiss
+            data: { notification_id: claude_fleet_update }
           - stop: switched off
       - condition: state
         entity_id: input_boolean.claude_fleet_update_check
@@ -1372,4 +1380,37 @@ automation:
             {{ {'installed_version': installed, 'latest_version': latest,
                 'title': 'Claude Fleet: Home Assistant files',
                 'release_url': url, 'release_summary': summary} | to_json }}
+      # Announce a new version once, under the sidebar bell. HA's own Settings badge
+      # counts only updates it can install, and this one has no Install, so on its
+      # own it would only show under Settings → System → Updates, as "not
+      # installable". Not for a skipped version; cleared once you are up to date.
+      - variables:
+          newer: "{{ version(latest) > version(installed) }}"
+          skipped: "{{ state_attr('update.claude_fleet', 'skipped_version') }}"
+          announced: "{{ states('input_text.claude_fleet_update_notified') }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ newer and latest != skipped and latest != announced }}"
+            sequence:
+              - action: persistent_notification.create
+                data:
+                  notification_id: claude_fleet_update
+                  title: "Claude Fleet {{ latest }} is out"
+                  message: >-
+                    You have {{ installed }}. To update, copy the files below from the
+                    [release]({{ url }}), then restart. **Skip** it under Settings →
+                    System → Updates if you'd rather not.
+
+
+                    {{ rel.get('body') or summary }}
+              - action: input_text.set_value
+                target: { entity_id: input_text.claude_fleet_update_notified }
+                data: { value: "{{ latest }}" }
+          - conditions:
+              - condition: template
+                value_template: "{{ not newer }}"
+            sequence:
+              - action: persistent_notification.dismiss
+                data: { notification_id: claude_fleet_update }
 
