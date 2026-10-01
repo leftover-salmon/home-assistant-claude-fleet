@@ -84,9 +84,10 @@ Worth knowing before you install, because it's easy not to think about:
 - **Only when you run `scripts/diagnose.sh`:** its report (file paths, which tools it found,
   and your settings except the password) is published, retained, to
   `claude/<machine>/diag/report`, so it can be read from the Home Assistant end.
-
-- **Only if you turn on the update check:** Home Assistant asks GitHub's public API once a
-  day for this project's newest release. Nothing about you or your setup is sent.
+- **From Home Assistant, the update check:** once a day, Home Assistant asks GitHub's public
+  API for this project's newest release, so new versions show in Settings → Updates.
+  Nothing about you or your setup is sent. It's on unless you turn it off: the **Update
+  check** switch on the Setup tab.
 
 Nothing is sent anywhere else. The hook talks only to your MQTT broker (and to `gh` and
 `claude`, if you have them). The MQTT password never appears on a command line, where other
@@ -219,7 +220,7 @@ Only sessions started after installing report.
 
 The hook and the Home Assistant files have separate version numbers, and the
 [changelog](CHANGELOG.md) says which changed and what to copy. To hear about new versions,
-turn on the **Update check** on the Setup tab, which puts them in Settings → Updates
+Home Assistant shows them in Settings → Updates, unless you turn the update check off
 ([details](docs/EXTRAS.md#update-check)), or **Watch → Custom → Releases** on this repo.
 
 - **Plugin:** `/plugin` → **Marketplaces** → claude-fleet → **Update**, then update the plugin.

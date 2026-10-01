@@ -45,7 +45,7 @@ KEY_ENTITIES = [
     "sensor.claude_output_tokens_today_opus", "binary_sensor.claude_anyone_waiting",
     "binary_sensor.claude_fleet_setup_needed", "input_text.claude_fleet_quip",
     "input_boolean.claude_lamp_enabled", "input_datetime.claude_recap_time",
-    "input_boolean.claude_fleet_update_check",
+    "input_boolean.claude_fleet_update_check", "input_text.claude_fleet_defaults_applied",
 ]
 
 
@@ -326,18 +326,24 @@ def check_alerts(states, logbook, exp):
 
 
 # ================================================================ update check
-# Opt-in: switched on, the package asks GitHub for the newest "Home Assistant
-# files" release and publishes update.claude_fleet; switched off, removes it.
+# On by default: a fresh install starts with the switch on (applied once, by
+# "Claude · defaults, once"), the package asks GitHub for the newest "Home
+# Assistant files" release and publishes update.claude_fleet; switched off,
+# removes it.
 # This run reaches the real GitHub. If GitHub can't answer, the entity still
 # appears, with the installed version as the latest, so only its shape is
 # required, not a particular release.
 REPO_URL = "https://github.com/leftover-salmon/home-assistant-claude-fleet"
 
 
-def check_update(on, off, version):
+def check_update(on, off, version, fresh_switch="on"):
     """on: update.claude_fleet's state dict after switching on (None if it never
-    appeared); off: the same after switching off (None if it is gone)."""
+    appeared); off: the same after switching off (None if it is gone);
+    fresh_switch: the switch's state on the fresh install, before anything touched it."""
     out = []
+    if fresh_switch != "on":
+        out.append("input_boolean.claude_fleet_update_check = %s on a fresh install, expected on (the default)"
+                   % fresh_switch)
     if on is None:
         return ["update.claude_fleet never appeared after switching the update check on"]
     a = on.get("attributes", {})
@@ -780,6 +786,7 @@ def self_test():
     expect("update: a latest that is not a version fails",
            check_update(dict(u_on, attributes=dict(u_on["attributes"], latest_version="ha-files-v0.3.0")), None, "0.3.0"), True)
     expect("update: unavailable fails", check_update(dict(u_on, state="unavailable"), None, "0.3.0"), True)
+    expect("update: off by default on a fresh install fails", check_update(u_on, None, "0.3.0", fresh_switch="off"), True)
     gh_403 = "2026-10-01 14:12:44.731 WARNING (MainThread) [homeassistant.components.rest_command] Error. Url: https://api.github.com/repos/leftover-salmon/home-assistant-claude-fleet/releases?per_page=30. Status code 403. Payload: None\n"
     expect("log: GitHub rate-limiting the update check passes", check_log(GOOD_LOG + gh_403), False)
     expect("log: the update check's URL answering 404 fails", check_log(GOOD_LOG + gh_403.replace("403", "404")), True)
@@ -969,13 +976,15 @@ def live():
             if pred(u) or time.time() > end:
                 return u
             time.sleep(2)
+    st, sw = ha.http("GET", "/api/states/input_boolean.claude_fleet_update_check", token=ha.token())
+    fresh = sw.get("state") if st == 200 else "missing"
     switch("turn_on")
     u_on = wait(lambda u: u is not None)
     switch("turn_off")
     u_off = wait(lambda u: u is None)
     a = (u_on or {}).get("attributes", {})
-    record("update check: on adds update.claude_fleet (latest %s), off removes it" % a.get("latest_version"),
-           check_update(u_on, u_off, read_repo_versions()["package"]))
+    record("update check: on by default, adds update.claude_fleet (latest %s), off removes it" % a.get("latest_version"),
+           check_update(u_on, u_off, read_repo_versions()["package"], fresh))
 
     # ---- repairs and the log, last, so they cover everything above
     issues = ha.ws([{"type": "repairs/list_issues"}])[0]["result"]["issues"]

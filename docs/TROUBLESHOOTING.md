@@ -22,8 +22,8 @@
   `settings.json` (with a backup) and leaves every other hook. Then delete
   `~/.claude/hooks/claude-ha-status.sh`, `~/.claude/ha-status.env` and `~/.claude/ha-status/`
   if you want them gone.
-- **In Home Assistant:** if you turned on the update check, turn it off first, on the Setup
-  tab: that removes `update.claude_fleet` and its retained message on the broker, which
+- **In Home Assistant:** turn off the update check first (the **Update check** switch on the
+  Setup tab): that removes `update.claude_fleet` and its retained message on the broker, which
   nothing else would. Then delete the `claude_fleet*.yaml` packages and the dashboard, remove the
   `claude-fleet` dashboard entry from `configuration.yaml` (and the `lovelace:` and
   `dashboards:` keys above it, if nothing else is under them), and restart. The session

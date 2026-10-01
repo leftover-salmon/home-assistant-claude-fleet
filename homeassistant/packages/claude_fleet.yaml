@@ -13,8 +13,10 @@ input_boolean:
   claude_lamp_enabled:
     name: Claude status light
     icon: mdi:lightbulb-on-outline
-  # Off unless you turn it on: the one thing in Claude Fleet that reaches the
-  # internet. See "Claude · update check" at the end.
+  # On unless you turn it off: the one thing in Claude Fleet that reaches the
+  # internet. See "Claude · check GitHub for new versions" at the end. It has no
+  # `initial:`, which would turn it back on at every restart; "Claude · defaults,
+  # once" switches it on the first time only.
   claude_fleet_update_check:
     name: Claude Fleet update check
     icon: mdi:package-up
@@ -40,6 +42,15 @@ rest_command:
       Accept: application/vnd.github+json
       User-Agent: home-assistant-claude-fleet
     timeout: 20
+
+# Which "on by default" settings have been applied, so each is applied once: a
+# switch that starts off can't tell "never set" from "you turned it off", and
+# this can. Comma-separated names; nothing to edit, and not on the dashboard.
+input_text:
+  claude_fleet_defaults_applied:
+    name: Claude Fleet defaults applied
+    icon: mdi:cog-outline
+    max: 255
 
 template:
   # ======================================================= PLAN USAGE SOURCE
@@ -188,7 +199,7 @@ template:
       - name: Claude Fleet package version
         unique_id: claude_fleet_package_version
         icon: mdi:tag-outline
-        state: "0.3.0"
+        state: "0.3.1"
 
   # ---- derived from the four above --------------------------------------------
   - sensor:
@@ -1100,6 +1111,36 @@ automation:
                 target: { entity_id: "{{ lamp }}" }
                 data: { flash: long }
 
+  # ------------------------------------------------- defaults, applied once
+  # A default that is a switch being ON needs applying exactly once, or turning it
+  # off would not survive a restart. Each name is recorded in
+  # input_text.claude_fleet_defaults_applied after it is applied, and never again.
+  - id: claude_fleet_defaults_once
+    alias: "Claude · defaults, once"
+    triggers:
+      - trigger: homeassistant
+        event: start
+    # a new input_text with no value reads unknown, not empty: that is "nothing
+    # applied yet". Only unavailable (the helper not loaded) means wait.
+    conditions:
+      - condition: template
+        value_template: "{{ states('input_text.claude_fleet_defaults_applied') != 'unavailable' }}"
+    actions:
+      - variables:
+          done: >-
+            {%- set v = states('input_text.claude_fleet_defaults_applied') %}
+            {{ ('' if v == 'unknown' else v).split(',') | map('trim') | reject('eq', '') | list }}
+      - if:
+          - condition: template
+            value_template: "{{ 'update_check' not in done }}"
+        then:
+          - action: input_boolean.turn_on
+            target: { entity_id: input_boolean.claude_fleet_update_check }
+          - action: input_text.set_value
+            target: { entity_id: input_text.claude_fleet_defaults_applied }
+            data:
+              value: "{{ (done + ['update_check']) | join(',') }}"
+
   # -------------------------------------------------------------- daily recap
   - id: claude_recap_time_default
     alias: "Claude · recap time default"
@@ -1236,7 +1277,9 @@ automation:
             - action: mqtt.publish
               data: { topic: "{{ repeat.item.base }}/state", payload: "", retain: true }
 
-  # ---- update check: an update entity in Settings → Updates, opt-in -----------
+  # ---- update check: an update entity in Settings → Updates ------------------
+  # On by default ("Claude · defaults, once"); the Update check switch on the Setup
+  # tab turns it off. This automation is the worker, not the switch: leave it on.
   # With input_boolean.claude_fleet_update_check on, ask GitHub once a day (and at
   # startup, and when it is switched on) for the newest "Home Assistant files"
   # release, and publish update.claude_fleet over MQTT discovery: the version you
@@ -1247,7 +1290,10 @@ automation:
   # Off removes the entity: discovery cleared first, then its state (the other
   # order makes the live entity read an empty message).
   - id: claude_fleet_update_check
-    alias: "Claude · update check"
+    alias: "Claude · check GitHub for new versions"
+    description: >-
+      Does the work for the Update check switch on the Claude Fleet Setup tab. Turn
+      that switch off to stop checking; leave this automation on.
     mode: queued
     max_exceeded: silent
     triggers:

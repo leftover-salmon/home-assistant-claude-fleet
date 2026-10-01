@@ -89,38 +89,9 @@ lovelace:
 EOF
 for f in automations scenes; do [ -f "$CONFIG/$f.yaml" ] || echo '[]' > "$CONFIG/$f.yaml"; done
 [ -f "$CONFIG/scripts.yaml" ] || echo '{}' > "$CONFIG/scripts.yaml"
-cp "$REPO/homeassistant/packages/claude_fleet.yaml" "$REPO/homeassistant/packages/claude_fleet_quip.yaml" "$CONFIG/packages/"
 cp "$REPO/homeassistant/dashboards/claude_fleet.yaml" "$CONFIG/dashboards/"
-ok "configuration.yaml, the package, the aside package and the dashboard"
+ok "configuration.yaml and the dashboard (the packages go in after MQTT, step 6)"
 
-# The alert blueprints, and an automation from each as someone would make it in the
-# UI. The demo has no phone, so the "other action" writes to the logbook, which
-# check.py reads; no alerts wait, so the waiting one fires as soon as a session does.
-mkdir -p "$CONFIG/blueprints/automation/claude_fleet"
-cp "$REPO"/blueprints/automation/claude_fleet/*.yaml "$CONFIG/blueprints/automation/claude_fleet/"
-cat > "$CONFIG/packages/claude_fleet_demo_alerts.yaml" <<'EOF2'
-# written by tests/e2e/demo/up.sh
-automation:
-  - id: claude_fleet_alert_waiting
-    alias: Claude Fleet alert waiting
-    use_blueprint:
-      path: claude_fleet/session_waiting.yaml
-      input:
-        delay: 0
-        extra_actions:
-          - action: logbook.log
-            data: { name: Claude Fleet alert, message: "{{ title }}: {{ message }}" }
-  - id: claude_fleet_alert_limits
-    alias: Claude Fleet alert limits
-    use_blueprint:
-      path: claude_fleet/plan_limits.yaml
-      input:
-        delay: 0
-        extra_actions:
-          - action: logbook.log
-            data: { name: Claude Fleet alert, message: "{{ title }}: {{ message }}" }
-EOF2
-ok "the alert blueprints, and an automation from each"
 
 HX="$CONFIG/www/history-explorer-card.js"
 if [ ! -f "$HX" ] || [ "$(sha256 "$HX")" != "$HX_SHA256" ]; then
@@ -152,15 +123,51 @@ step "4. onboarding"
 step "5. MQTT integration"
 "$PY" "$DEMO/ha.py" mqtt "$C_MQTT" 1883
 
-step "6. history explorer card resource"
+step "6. the packages"
+# After the MQTT integration, as the README has it: MQTT is a requirement, so a
+# real install has it before the package arrives. In the other order, the update
+# check (on by default) publishes at the first start, before MQTT exists, and HA
+# raises "action mqtt.publish not found" as a repair that outlives the restart.
+cp "$REPO/homeassistant/packages/claude_fleet.yaml" "$REPO/homeassistant/packages/claude_fleet_quip.yaml" "$CONFIG/packages/"
+ok "the package and the aside package"
+# The alert blueprints, and an automation from each as someone would make it in the
+# UI. The demo has no phone, so the "other action" writes to the logbook, which
+# check.py reads; no alerts wait, so the waiting one fires as soon as a session does.
+mkdir -p "$CONFIG/blueprints/automation/claude_fleet"
+cp "$REPO"/blueprints/automation/claude_fleet/*.yaml "$CONFIG/blueprints/automation/claude_fleet/"
+cat > "$CONFIG/packages/claude_fleet_demo_alerts.yaml" <<'EOF2'
+# written by tests/e2e/demo/up.sh
+automation:
+  - id: claude_fleet_alert_waiting
+    alias: Claude Fleet alert waiting
+    use_blueprint:
+      path: claude_fleet/session_waiting.yaml
+      input:
+        delay: 0
+        extra_actions:
+          - action: logbook.log
+            data: { name: Claude Fleet alert, message: "{{ title }}: {{ message }}" }
+  - id: claude_fleet_alert_limits
+    alias: Claude Fleet alert limits
+    use_blueprint:
+      path: claude_fleet/plan_limits.yaml
+      input:
+        delay: 0
+        extra_actions:
+          - action: logbook.log
+            data: { name: Claude Fleet alert, message: "{{ title }}: {{ message }}" }
+EOF2
+ok "the alert blueprints, and an automation from each"
+
+step "7. history explorer card resource"
 "$PY" "$DEMO/ha.py" resource "/local/history-explorer-card.js?v=${HX_VERSION#v}"
 
-step "7. check and restart"
+step "8. check and restart"
 "$PY" "$DEMO/ha.py" check-config
 "$PY" "$DEMO/ha.py" settle
 "$PY" "$DEMO/ha.py" restart
 
-step "8. installed?"
+step "9. installed?"
 for e in sensor.claude_fleet_status sensor.claude_sessions_running input_text.claude_fleet_quip; do
   "$PY" "$DEMO/ha.py" states "$e" | grep -q . || die "$e is missing: the package did not load (docker logs $C_HA)"
 done
