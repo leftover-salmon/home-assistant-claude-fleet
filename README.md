@@ -6,7 +6,7 @@ Keep track of many concurrent Claude Code sessions across several computers. Eac
 reports its state to Home Assistant over MQTT, and HA turns that into a wall dashboard, a
 status light and a daily recap.
 
-**Tested on macOS.** Linux should work but hasn't been tried; on Windows, use WSL.
+**Tested on macOS, and on Linux by the automated tests.** On Windows, use WSL.
 
 ![The Sessions tab: six sessions across three computers, plan gauges, today, records and charts](docs/images/sessions.png)
 
@@ -61,10 +61,10 @@ such as [Clawdmeter](https://github.com/corgan2222/ha-clawdmeter) or
 an **AWTRIX NG** pixel clock or any smart bulb; a conversation agent or HA's AI Task, for the
 aside.
 
-**Platforms.** Built and used daily on macOS. The hook is bash with a fallback for each
-Mac-only piece, and `install.sh` knows apt and dnf as well as Homebrew, so Linux should work,
-but nobody has run it there yet. Windows: run Claude Code under WSL, which is the Linux case.
-The Home Assistant side doesn't care what the computers run.
+**Platforms.** Built and used daily on macOS. On Linux, the automated tests install the hook
+with `install.sh` and drive real sessions through it on every change (Ubuntu, via apt), but
+nobody uses it there day to day yet. Windows: run Claude Code under WSL, which is the Linux
+case. The Home Assistant side doesn't care what the computers run.
 
 ## What leaves your computer
 
