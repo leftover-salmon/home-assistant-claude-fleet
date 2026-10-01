@@ -12,7 +12,10 @@ need docker curl jq python3
 command -v sha256sum >/dev/null 2>&1 || need shasum
 
 step "0. runtime folder: $CF_DEMO_DIR"
-mkdir -p "$CONFIG"/{packages,dashboards,www,themes} "$MOSQ"/{config,data} "$HOMES"
+# Every folder the scripts write into later is made now, before Home Assistant
+# starts: in its container it runs as root, and on Linux a folder it creates (it
+# makes blueprints/ at its first start) is then not writable from out here.
+mkdir -p "$CONFIG"/{packages,dashboards,www,themes,blueprints/automation/claude_fleet} "$MOSQ"/{config,data} "$HOMES"
 ( umask 077; mkdir -p "$SECRETS" ); chmod 700 "$SECRETS"
 new_secret "$SECRETS/ha_password"
 new_secret "$SECRETS/mqtt_ha_password"
@@ -133,7 +136,6 @@ ok "the package and the aside package"
 # The alert blueprints, and an automation from each as someone would make it in the
 # UI. The demo has no phone, so the "other action" writes to the logbook, which
 # check.py reads; no alerts wait, so the waiting one fires as soon as a session does.
-mkdir -p "$CONFIG/blueprints/automation/claude_fleet"
 cp "$REPO"/blueprints/automation/claude_fleet/*.yaml "$CONFIG/blueprints/automation/claude_fleet/"
 cat > "$CONFIG/packages/claude_fleet_demo_alerts.yaml" <<'EOF2'
 # written by tests/e2e/demo/up.sh
