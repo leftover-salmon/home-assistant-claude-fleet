@@ -17,6 +17,10 @@ when one is out (unless you turn off the **Update check** on the Setup tab), or 
 [GitHub repo](https://github.com/leftover-salmon/home-assistant-claude-fleet): each version
 below is also a release there.
 
+## Unreleased
+
+Changes on `main` that are not in a release yet. Nothing here.
+
 ## Home Assistant files 0.3.2 (2026-10-01)
 
 **To update:** copy `packages/claude_fleet.yaml` and `dashboards/claude_fleet.yaml` again,
