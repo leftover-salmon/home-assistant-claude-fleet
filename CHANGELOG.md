@@ -19,7 +19,11 @@ below is also a release there.
 
 ## Unreleased
 
-Changes on `main` that are not in a release yet. Nothing here.
+Changes on `main` that are not in a release yet. Documentation only, so nothing to update.
+
+- **Away from home:** a new README section on why a laptop stops reporting when it leaves
+  the house (Home Assistant Cloud doesn't carry MQTT) and how to keep it reporting with
+  Tailscale, plus a matching troubleshooting entry.
 
 ## Home Assistant files 0.3.2 (2026-10-01)
 

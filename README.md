@@ -216,6 +216,38 @@ Only sessions started after installing report.
 - **The charts start empty.** They fill in once Home Assistant has recorded an hour of
   statistics, and the by-day ones after a day or two.
 
+## Away from home
+
+A laptop that leaves the house stops reporting. The hook publishes to the broker on your
+home network, and `homeassistant.local` only resolves there, so away from home every publish
+fails with `Lookup error` in `errors.log`. Nothing is queued: sessions from while you were
+away never reach Home Assistant. A session shows up again with its next event once the
+computer can reach the broker.
+
+**Remote access to Home Assistant doesn't cover this.** Home Assistant Cloud (Nabu Casa)
+carries the web interface and the app, not MQTT, so the dashboard loads fine away from home
+while the data that feeds it goes nowhere.
+
+What works is putting the computer and Home Assistant on a private network that follows the
+computer around. With [Tailscale](https://tailscale.com):
+
+1. **In Home Assistant:** install the **Tailscale** add-on, start it and log in from its web
+   UI. Turn on **Start on boot**.
+2. **On the computer:** install Tailscale and log in to the same account.
+3. **Point the hook at Home Assistant's Tailscale address,** the `100.x.y.z` one shown for it
+   in the Tailscale app. It works at home too, so set it once and leave it. With the plugin,
+   change the broker in `/plugin` → **Installed** → claude-fleet → **Configure options**; the
+   plugin's setting wins over `ha-status.env`, so changing only the file does nothing. With
+   the script, set `MQTT_HOST` in `ha-status.env`. `diagnose.sh` tests both, and says which
+   one real sessions use.
+4. **Turn off key expiry for Home Assistant** in the Tailscale admin console (Machines → its
+   ⋯ menu → **Disable key expiry**). By default a device's key expires after 180 days, and
+   Home Assistant gives no warning when it does: it drops off and the fleet goes quiet again.
+   A laptop's key can stay as it is, because the Tailscale app asks you to log in again.
+
+Any VPN that lets the computer reach the broker works the same way. **Don't forward the
+broker's port to the internet** instead: the hook publishes your prompts.
+
 ## Updating
 
 The hook and the Home Assistant files have separate version numbers, and the

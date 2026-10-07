@@ -5,6 +5,8 @@
 - **A computer isn't reporting:** run `./scripts/diagnose.sh` there. Failed publishes are
   logged to `~/.claude/ha-status/errors.log` (the reason, the host, and which settings came
   from the plugin, never the password), and `diagnose.sh` shows the end of it.
+- **A laptop reports at home but not away (`Lookup error` in `errors.log`):** the broker is
+  only reachable on your home network; see [Away from home](../README.md#away-from-home).
 - **`Bad file descriptor` on a Mac:** Local Network permission; see
   [On each computer](../README.md#2-on-each-computer).
 - **A session is missing:** only sessions started after installing report. If one vanished
