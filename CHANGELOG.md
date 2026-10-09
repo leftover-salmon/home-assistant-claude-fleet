@@ -19,11 +19,17 @@ below is also a release there.
 
 ## Unreleased
 
-Changes on `main` that are not in a release yet. Documentation only, so nothing to update.
+Changes on `main` that are not in a release yet.
 
 - **Away from home:** a new README section on why a laptop stops reporting when it leaves
   the house (Home Assistant Cloud doesn't carry MQTT) and how to keep it reporting with
-  Tailscale, plus a matching troubleshooting entry.
+  Tailscale, plus a matching troubleshooting entry. Documentation only.
+- **Dashboard, At this rate:** a session "limit at" warning now says it comes from the last
+  30 minutes' rate. "45% used against 47% of the window — ⚠️ limit at 12:29 PM" read as a
+  contradiction: the percentages are the window's average, the warning only the last half
+  hour. It now reads "— but the last 30 min ran hot: at that pace, ⚠️ limit at 12:29 PM" (or
+  "at the last 30 min's pace" when the recent rate isn't above average), and "What do these
+  mean?" explains the two bases. Update: copy `homeassistant/dashboards/claude_fleet.yaml`.
 
 ## Home Assistant files 0.3.2 (2026-10-01)
 

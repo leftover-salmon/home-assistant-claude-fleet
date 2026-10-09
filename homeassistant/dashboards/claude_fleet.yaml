@@ -325,8 +325,16 @@ views:
                   {%- set el = (100 * (win - mins) / win) | round(0) | int %}
                   {{ u }}% used against {{ el }}% of the window
                   {%- if ttl >= 0 and mins >= 0 and ttl < mins %}
-                  {%- if u >= 20 %} — ⚠️ **limit at {{ (now() + timedelta(minutes=ttl)).strftime('%-I:%M %p') }}**
-                  {%- else %} — limit at **{{ (now() + timedelta(minutes=ttl)).strftime('%-I:%M %p') }}**, though it is early
+                  {#- The two numbers above are the WINDOW average; the warning is the last
+                      30 minutes' rate (usage_rate). Without saying so, "45% used against
+                      47%" next to "limit at 12:29" read as a contradiction (2026-10-09):
+                      on average under pace, but the last half hour ran faster. So the
+                      line names its basis, and says "ran hot" only when the recent rate
+                      really is above the window's average. -#}
+                  {%- set avg = use / ([1, win - mins] | max) %}
+                  {%- set basis = 'but the last 30 min ran hot: at that pace,' if rate > avg else "at the last 30 min's pace," %}
+                  {%- if u >= 20 %} — {{ basis }} ⚠️ **limit at {{ (now() + timedelta(minutes=ttl)).strftime('%-I:%M %p') }}**
+                  {%- else %} — {{ basis }} limit at **{{ (now() + timedelta(minutes=ttl)).strftime('%-I:%M %p') }}**, though it is early
                   {%- endif %}
                   {%- elif ttl >= 0 %}
                   {#- Mirror the Weekly line exactly when there is no warning to give:
@@ -376,7 +384,7 @@ views:
                   **Weekly** — reset time unavailable
                   {%- endif %}
 
-                  <details><summary>What do these mean?</summary><ul><li><b>Session</b> is the 5-hour limit, <b>Weekly</b> the 7-day one, both as your plan integration reports them.</li><li><b>Pace</b> compares % used with % of the window gone. Under pace means room to spare; over pace means using it faster than time passes.</li><li><b>Gauge colours, session</b>: where this rate lands by the reset. Yellow if it projects to 90% or more; red if it projects to 100% once more than 20% is used (earlier than that, one busy minute swings the projection, so it stays yellow).</li><li><b>Gauge colours, weekly</b>: yellow when 3–9 points over pace, <i>or</i> on pace but with less left than a heavy day would use before the reset (your busiest day of the last week, never under 1.5× an average day). Red at 10+ points over pace, or at 100%.</li><li><b>Time to limit</b> assumes you keep going at the current rate; early in a window it is noisy, and the card says so.</li></ul></details>
+                  <details><summary>What do these mean?</summary><ul><li><b>Session</b> is the 5-hour limit, <b>Weekly</b> the 7-day one, both as your plan integration reports them.</li><li><b>Pace</b> compares % used with % of the window gone. Under pace means room to spare; over pace means using it faster than time passes.</li><li><b>Gauge colours, session</b>: where this rate lands by the reset. Yellow if it projects to 90% or more; red if it projects to 100% once more than 20% is used (earlier than that, one busy minute swings the projection, so it stays yellow).</li><li><b>Gauge colours, weekly</b>: yellow when 3–9 points over pace, <i>or</i> on pace but with less left than a heavy day would use before the reset (your busiest day of the last week, never under 1.5× an average day). Red at 10+ points over pace, or at 100%.</li><li><b>Used against % of the window</b> is your average so far. <b>Limit at</b> is different: it assumes you keep going at your <i>last 30 minutes'</i> rate, so a busy half hour can warn even while the average is under pace. Early in a window it is noisy, and the card says so.</li></ul></details>
 
           # The same three cards on a phone: see the comment at the top of this block.
           - type: grid
