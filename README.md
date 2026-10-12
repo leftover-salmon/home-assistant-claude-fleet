@@ -275,6 +275,11 @@ dashboard don't match, and flags any computer whose hook is behind the others.
   that must never block, and more, each one learned by getting it wrong.
 - **[The MQTT protocol](docs/PROTOCOL.md):** every topic and field, for building a different
   view.
+- **The story behind it,** on the author's blog:
+  [Using Home Assistant to Herd a Gaggle of Claude Sessions](https://mikeontechnology.com/using-home-assistant-to-herd-a-gaggle-of-claude-sessions/),
+  on why it exists, and
+  [Implementing a Mesh VPN to Take My Home Network With Me](https://mikeontechnology.com/implementing-a-mesh-vpn-to-take-my-home-network-with-me/),
+  on keeping a laptop reporting away from home.
 
 ## Status and maintenance
 

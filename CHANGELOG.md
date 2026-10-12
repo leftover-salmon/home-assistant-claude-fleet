@@ -30,6 +30,8 @@ Changes on `main` that are not in a release yet.
   hour. It now reads "— but the last 30 min ran hot: at that pace, ⚠️ limit at 12:29 PM" (or
   "at the last 30 min's pace" when the recent rate isn't above average), and "What do these
   mean?" explains the two bases. Update: copy `homeassistant/dashboards/claude_fleet.yaml`.
+- **Blog posts:** the README's More section links the two write-ups on the author's blog.
+  Documentation only.
 
 ## Home Assistant files 0.3.2 (2026-10-01)
 
