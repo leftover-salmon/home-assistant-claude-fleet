@@ -824,33 +824,21 @@ views:
 
           # ------------------------------------------------ sessions over time
           # ------------------------------------------------------------ burn rate
-          # How fast the fleet is writing right now, and the last hour of it. Output
-          # tokens a minute (see the package for why output). The dial tops out at
-          # 8,000: across a day of real use the rate was zero 70% of the time and
-          # under 2,000 for 90% of it, so a higher ceiling would leave the needle
-          # lying on the floor. Above it the needle pins and the number still reads
-          # true. The bands are one colour getting stronger, on purpose: fast is
-          # not bad, and the plan gauges above already say when it is too fast.
+          # How fast the fleet is writing right now, as water: still at zero, a
+          # trickle when one session is thinking, a fast, full, bright stream when
+          # many are. Output tokens a minute (see the package for why output). The
+          # card is this repo's own, homeassistant/www/claude-fleet-flow-card.js,
+          # and its header says how a rate becomes a depth and a speed. It began as
+          # a gauge, which showed the number and none of the feeling of it. The
+          # last hour sits beside it, because the stream only ever shows now.
           - type: grid
             columns: 2
             square: false
             grid_options: { columns: full }
             cards:
-              - type: gauge
+              - type: custom:claude-fleet-flow-card
                 entity: sensor.claude_output_token_rate
                 name: Output tokens a minute
-                min: 0
-                max: 8000
-                needle: true
-                segments:
-                  - from: 0
-                    color: "#b9d3f2"
-                  - from: 1000
-                    color: "#7fb0ea"
-                  - from: 3000
-                    color: "#3987e5"
-                  - from: 6000
-                    color: "#1f5fb0"
               - type: custom:history-explorer-card
                 header: "Last hour"
                 defaultTimeRange: 1h

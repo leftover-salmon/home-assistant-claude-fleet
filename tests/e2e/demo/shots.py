@@ -41,7 +41,7 @@ PROBE = """
  const out = {errors: [], hx: 0, hxCanvas: 0, bottom: 0, unknown: []};
  const walk = (root) => { for (const el of root.querySelectorAll('*')) {
    const t = el.tagName.toLowerCase();
-   if (t === 'hui-error-card') out.errors.push((el.shadowRoot ? el.shadowRoot.textContent : el.textContent).trim().slice(0, 300));
+   if (t === 'hui-error-card') out.errors.push((el.shadowRoot ? el.shadowRoot.textContent : el.textContent).trim().slice(0, 300) + ' | ' + JSON.stringify(el._config || {}).slice(0, 400));
    if (t === 'ha-alert' && el.getAttribute('alert-type') === 'error') out.errors.push('alert: ' + el.textContent.trim().slice(0, 300));
    if (t === 'history-explorer-card') out.hx++;
    if (t === 'canvas') out.hxCanvas++;

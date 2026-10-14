@@ -555,6 +555,7 @@ CARD_KEYS = {
                       "features_position"},
     "gauge": COMMON | {"entity", "name", "unit", "min", "max", "needle", "severity", "segments", "theme",
                        "attribute", "tap_action", "hold_action", "double_tap_action"},
+    "custom:claude-fleet-flow-card": COMMON | {"entity", "name", "max"},
     "custom:history-explorer-card": COMMON | {
         "header", "graphs", "defaultTimeRange", "uiLayout", "statistics", "labelAreaWidth", "cardName",
         "showUnavailable", "decimation", "rounding", "timeTicks", "lineGraphHeight", "barGraphHeight",
@@ -616,6 +617,29 @@ def _check_history(c, where, out):
                 if "*" in ent and ent != MACHINE_TOKENS_WILDCARD:
                     out.append("%s entities[%d]: wildcard %r is not %r, the one name the hook's "
                                "per-machine sensors are checked against" % (gw, j, ent, MACHINE_TOKENS_WILDCARD))
+
+
+FLOW_CARD_URL = "/local/claude-fleet-flow-card.js"
+
+
+def fetch_text(url):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=20) as r:
+            return r.read().decode("utf-8", "replace")
+    except Exception as err:      # the check below reports what is missing
+        return "ERROR %s" % err
+
+
+def check_flow_card(served, index_html):
+    """`served` is what Home Assistant returns for the card's URL; `index_html` is its
+    front page, which lists every extra module the frontend was configured to load."""
+    out = []
+    if 'customElements.define("claude-fleet-flow-card"' not in served:
+        out.append("%s is not the flow card (not copied to /config/www?): %r" % (FLOW_CARD_URL, served[:80]))
+    if FLOW_CARD_URL not in index_html:
+        out.append("the frontend is not loading %s (extra_module_url missing from configuration.yaml?)" % FLOW_CARD_URL)
+    return out
 
 
 def check_dashboard(config):
@@ -902,6 +926,13 @@ def self_test():
     n = len(markdown_cards(cfg))
     expect("render: the walk finds nested and phone-only cards (2)", [] if n == 2 else ["found %d" % n], False)
 
+    # ---- the flow card
+    card_js = open(os.path.join(REPO, "homeassistant", "www", "claude-fleet-flow-card.js")).read()
+    page = '<script type="module" crossorigin="use-credentials" src="%s"></script>' % FLOW_CARD_URL
+    expect("flow card: the repo's file, listed on the front page, passes", check_flow_card(card_js, page), False)
+    expect("flow card: a 404 page fails", check_flow_card("404: Not Found", page), True)
+    expect("flow card: a front page that does not load it fails", check_flow_card(card_js, "<html></html>"), True)
+
     # ---- static dashboard checks
     expect("dashboard: a clean snippet passes", check_dashboard(cfg), False)
     for name, (a, b) in BAD_DASHBOARDS.items():
@@ -991,6 +1022,11 @@ def live():
     record("markdown cards render strictly (%d cards, 3 views, phone-only included)" % len(cards),
            check_render(rendered, min_cards=10))
     record("Today card's sums", check_today_card(rendered, exp))
+
+    # ---- the flow card: the dashboard asks for it by name, so Home Assistant must
+    # serve the file, and the frontend must have been told to load it
+    record("flow card served and loaded by the frontend", check_flow_card(
+        fetch_text(ha.BASE + "/local/claude-fleet-flow-card.js"), fetch_text(ha.BASE + "/")))
 
     # ---- static checks on the dashboard, as HA served it and as the repo has it
     record("dashboard config keys and daily intervals (as HA loaded it)", check_dashboard(config))

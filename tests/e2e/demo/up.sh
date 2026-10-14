@@ -74,6 +74,8 @@ $MARK
 default_config:
 frontend:
   themes: !include_dir_merge_named themes
+  extra_module_url:
+    - /local/claude-fleet-flow-card.js
 automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
@@ -93,6 +95,8 @@ EOF
 for f in automations scenes; do [ -f "$CONFIG/$f.yaml" ] || echo '[]' > "$CONFIG/$f.yaml"; done
 [ -f "$CONFIG/scripts.yaml" ] || echo '{}' > "$CONFIG/scripts.yaml"
 cp "$REPO/homeassistant/dashboards/claude_fleet.yaml" "$CONFIG/dashboards/"
+mkdir -p "$CONFIG/www"
+cp "$REPO/homeassistant/www/claude-fleet-flow-card.js" "$CONFIG/www/"
 ok "configuration.yaml and the dashboard (the packages go in after MQTT, step 6)"
 
 

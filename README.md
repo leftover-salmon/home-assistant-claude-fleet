@@ -119,12 +119,18 @@ lovelace:
       icon: mdi:robot-outline
       show_in_sidebar: true
       filename: dashboards/claude_fleet.yaml
+frontend:
+  extra_module_url:
+    - /local/claude-fleet-flow-card.js
 ```
 
 Both files are called `claude_fleet.yaml`, so mind which is which:
 
 - `homeassistant/packages/claude_fleet.yaml` goes in `/config/packages/`.
 - `homeassistant/dashboards/claude_fleet.yaml` goes in `/config/dashboards/`.
+- `homeassistant/www/claude-fleet-flow-card.js` goes in `/config/www/` (create the folder if
+  it isn't there). It is the animated stream on the Sessions tab; the `frontend:` lines above
+  are what load it.
 
 Install **History explorer card** via HACS first, or every chart renders as an error. Then
 **restart**: a new package and a new dashboard both need one.
