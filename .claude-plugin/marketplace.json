@@ -9,7 +9,7 @@
       "name": "claude-fleet",
       "source": "./",
       "description": "Report every Claude Code session to Home Assistant over MQTT: live status, tokens, plan limits and RTK savings on a wall dashboard.",
-      "version": "0.1.12"
+      "version": "0.1.13"
     }
   ]
 }

@@ -21,34 +21,56 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+## Home Assistant files 0.4.0 (2026-10-13)
+
+**To update:** copy `packages/claude_fleet.yaml` and `dashboards/claude_fleet.yaml` again,
+and copy the **new file** `www/claude-fleet-flow-card.js` to `/config/www/`. Then add two
+lines under `frontend:` in `configuration.yaml` (the README shows where), and restart:
+
+```yaml
+frontend:
+  extra_module_url:
+    - /local/claude-fleet-flow-card.js?v=2
+```
+
+Without those two lines the burn-rate card shows an error. Update the hook on each computer
+too ([Hook 0.1.13](#hook-0113-2026-10-13)): a computer on 0.1.12 still counts toward the
+fleet, but as one spike a turn, and it gets no stream or bar of its own.
+
 - **Burn rate, on the Sessions tab:** a stream that runs with the fleet's output tokens a
-  minute (the last five minutes): still at zero, a trickle when one session is thinking,
-  fast, full and bright when many are, with the last hour charted beside it. Each computer
-  has a stream of its own running into it, as wide and as fast as that computer is writing. Output and not
-  all tokens, because about 98% of the total is the same context re-read from cache every
-  turn. The hook now counts tokens every two minutes while a turn runs (`TOKENS_RECHECK`, 0
-  to turn it off); before, a long turn's tokens all arrived when it ended. Update: both Home
-  Assistant files and the hook, and **one new file and two new lines of configuration**:
-  copy `homeassistant/www/claude-fleet-flow-card.js` to `/config/www/`, and add
-  `extra_module_url: [/local/claude-fleet-flow-card.js?v=2]` under `frontend:` in
-  `configuration.yaml` (the README shows it). Without them that one card shows an error. A
-  computer on an older hook still counts, as one spike a turn.
-- **Output tokens by machine, on the Tokens tab:** ten-minute bars stacked by computer. Each
-  computer's hook publishes its own total (`sensor.claude_machine_<name>_output_tokens`),
-  so a new computer appears in the chart without editing anything.
+  minute over the last five minutes. It is still at zero, a trickle when one session is
+  thinking, and fast, full and bright when many are, with the last hour charted beside it.
+  Each computer has a stream of its own running into it, as wide and as fast as that
+  computer is writing. It counts output tokens rather than all tokens because about 98% of
+  the total is the same context re-read from cache every turn.
+- **Output tokens by machine, on the Tokens tab:** ten-minute bars stacked by computer. A
+  new computer appears in the chart by itself once it runs hook 0.1.13.
 - **PRs opened by day, on the Tokens tab:** a bar a day, from `sensor.claude_prs_today`.
   Only PRs the sessions themselves opened; nothing is asked of GitHub.
-- **Away from home:** a new README section on why a laptop stops reporting when it leaves
-  the house (Home Assistant Cloud doesn't carry MQTT) and how to keep it reporting with
-  Tailscale, plus a matching troubleshooting entry. Documentation only.
-- **Dashboard, At this rate:** a session "limit at" warning now says it comes from the last
-  30 minutes' rate. "45% used against 47% of the window — ⚠️ limit at 12:29 PM" read as a
-  contradiction: the percentages are the window's average, the warning only the last half
-  hour. It now reads "— but the last 30 min ran hot: at that pace, ⚠️ limit at 12:29 PM" (or
-  "at the last 30 min's pace" when the recent rate isn't above average), and "What do these
-  mean?" explains the two bases. Update: copy `homeassistant/dashboards/claude_fleet.yaml`.
-- **Blog posts:** the README's More section links the two write-ups on the author's blog.
-  Documentation only.
+- **At this rate, on the Sessions tab:** a session "limit at" warning now says it comes from
+  the last 30 minutes' rate. "45% used against 47% of the window — ⚠️ limit at 12:29 PM"
+  read as a contradiction: the percentages are the window's average, the warning only the
+  last half hour. It now reads "— but the last 30 min ran hot: at that pace, ⚠️ limit at
+  12:29 PM" (or "at the last 30 min's pace" when the recent rate isn't above average), and
+  "What do these mean?" explains the two bases.
+- **Documentation:** a README section on why a laptop stops reporting when it leaves the
+  house (Home Assistant Cloud doesn't carry MQTT) and how to keep it reporting with
+  Tailscale, with a matching troubleshooting entry; and links to the two write-ups on the
+  author's blog.
+
+## Hook 0.1.13 (2026-10-13)
+
+**To update:** with the plugin, `/plugin` → **Marketplaces** → claude-fleet → **Update**,
+then update the plugin; with the script, `git pull && ./install.sh`. Sessions already
+running keep the old hook until they are restarted. Pair it with [Home Assistant files
+0.4.0](#home-assistant-files-040-2026-10-13), which is what shows the new numbers.
+
+- **Tokens arrive while a turn runs.** The hook now counts a session's tokens every two
+  minutes during a long turn, instead of all at once when the turn ends, so the burn rate
+  moves while Claude is working. `TOKENS_RECHECK=0` in `ha-status.env` turns it off.
+- **Each computer reports its own output today,** as
+  `sensor.claude_machine_<name>_output_tokens`. This is what gives a computer its own
+  stream on the burn-rate card and its own colour in the by-machine chart.
 
 ## Home Assistant files 0.3.2 (2026-10-01)
 

@@ -1326,7 +1326,7 @@ views:
               {%- endif %}
               {#- this dashboard's version; the package's sensor must say the same.
                   Bump with the package (see the sensor's comment there) -#}
-              {%- set dash_v = '0.3.2' %}
+              {%- set dash_v = '0.4.0' %}
               {%- set pkg_v = states('sensor.claude_fleet_package_version') %}
               {%- if pkg_v != dash_v %}
               <ha-alert alert-type="warning" title="The package and the dashboard don't match">This dashboard is version {{ dash_v }}, and the package is {{ pkg_v if pkg_v not in bad else 'older than that (it has no version)' }}. Copy both <code>claude_fleet.yaml</code> files from the same download (one goes in <code>/config/packages/</code>, the other in <code>/config/dashboards/</code>), then restart.</ha-alert>
