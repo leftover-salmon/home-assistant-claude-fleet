@@ -637,8 +637,16 @@ def check_flow_card(served, index_html):
     out = []
     if 'customElements.define("claude-fleet-flow-card"' not in served:
         out.append("%s is not the flow card (not copied to /config/www?): %r" % (FLOW_CARD_URL, served[:80]))
+    v = _first(r'const FLOW_VERSION = "([^"]+)"', served)
+    want = "%s?v=%s" % (FLOW_CARD_URL, v)
     if FLOW_CARD_URL not in index_html:
         out.append("the frontend is not loading %s (extra_module_url missing from configuration.yaml?)" % FLOW_CARD_URL)
+    elif want not in index_html:
+        out.append("the frontend loads the flow card, but not as %s: the card is at version %s, and a "
+                   "browser that has the old file would keep it" % (want, v))
+    with open(os.path.join(REPO, "README.md")) as f:
+        if want not in f.read():
+            out.append("the README's extra_module_url line is not %s" % want)
     return out
 
 
@@ -928,10 +936,15 @@ def self_test():
 
     # ---- the flow card
     card_js = open(os.path.join(REPO, "homeassistant", "www", "claude-fleet-flow-card.js")).read()
-    page = '<script type="module" crossorigin="use-credentials" src="%s"></script>' % FLOW_CARD_URL
+    flow_v = _first(r'const FLOW_VERSION = "([^"]+)"', card_js)
+    page = '<script>import("%s?v=%s")</script>' % (FLOW_CARD_URL, flow_v)
     expect("flow card: the repo's file, listed on the front page, passes", check_flow_card(card_js, page), False)
     expect("flow card: a 404 page fails", check_flow_card("404: Not Found", page), True)
     expect("flow card: a front page that does not load it fails", check_flow_card(card_js, "<html></html>"), True)
+    expect("flow card: a front page loading it with no version fails",
+           check_flow_card(card_js, '<script>import("%s")</script>' % FLOW_CARD_URL), True)
+    expect("flow card: a front page loading an older version fails",
+           check_flow_card(card_js, '<script>import("%s?v=0")</script>' % FLOW_CARD_URL), True)
 
     # ---- static dashboard checks
     expect("dashboard: a clean snippet passes", check_dashboard(cfg), False)

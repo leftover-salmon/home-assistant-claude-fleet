@@ -75,7 +75,7 @@ default_config:
 frontend:
   themes: !include_dir_merge_named themes
   extra_module_url:
-    - /local/claude-fleet-flow-card.js
+    - /local/claude-fleet-flow-card.js?v=2
 automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml

@@ -23,13 +23,14 @@ Changes on `main` that are not in a release yet.
 
 - **Burn rate, on the Sessions tab:** a stream that runs with the fleet's output tokens a
   minute (the last five minutes): still at zero, a trickle when one session is thinking,
-  fast, full and bright when many are, with the last hour charted beside it. Output and not
+  fast, full and bright when many are, with the last hour charted beside it. Each computer
+  has a stream of its own running into it, as wide and as fast as that computer is writing. Output and not
   all tokens, because about 98% of the total is the same context re-read from cache every
   turn. The hook now counts tokens every two minutes while a turn runs (`TOKENS_RECHECK`, 0
   to turn it off); before, a long turn's tokens all arrived when it ended. Update: both Home
   Assistant files and the hook, and **one new file and two new lines of configuration**:
   copy `homeassistant/www/claude-fleet-flow-card.js` to `/config/www/`, and add
-  `extra_module_url: [/local/claude-fleet-flow-card.js]` under `frontend:` in
+  `extra_module_url: [/local/claude-fleet-flow-card.js?v=2]` under `frontend:` in
   `configuration.yaml` (the README shows it). Without them that one card shows an error. A
   computer on an older hook still counts, as one spike a turn.
 - **Output tokens by machine, on the Tokens tab:** ten-minute bars stacked by computer. Each
