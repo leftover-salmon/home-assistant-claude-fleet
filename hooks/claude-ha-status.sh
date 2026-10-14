@@ -65,6 +65,12 @@ CONTEXT_LIMIT="${CLAUDE_HA_CONTEXT_LIMIT:-200000}"
 case "$CONTEXT_LIMIT" in ''|*[!0-9]*) CONTEXT_LIMIT=200000 ;; esac
 STALE_MINUTES="${CLAUDE_HA_STALE_MINUTES:-20}"
 case "$STALE_MINUTES" in ''|*[!0-9]*) STALE_MINUTES=20 ;; esac
+# Seconds between token counts while a turn is still running. Counted only when
+# a turn ended, a long turn's tokens all arrived at once: nothing for twenty
+# minutes, then the lot, which a rate reads as idle followed by a spike. 0 goes
+# back to counting at the end of a turn only.
+TOKENS_RECHECK="${TOKENS_RECHECK:-120}"
+case "$TOKENS_RECHECK" in ''|*[!0-9]*) TOKENS_RECHECK=120 ;; esac
 RTK_THROTTLE="${RTK_THROTTLE:-600}"            # secs between RTK stats publishes per machine
 # Claude Code hands the model at most this many characters of a command's output
 # (its BASH_MAX_OUTPUT_LENGTH, default 30000). RTK counts a saving against the
@@ -197,6 +203,61 @@ rtk_publish() { # machine mslug now
   pub "${DISCOVERY_PREFIX}/sensor/${uid}/config" "$cfg"
   pub "$base/attrs" "$attrs"
   pub "$base/state" "$(jq -r '.today.saved' <<<"$attrs")"
+}
+
+# ---- tokens spent today, one session ------------------------------------------
+# This session and its subagents. Each API response is written once per content
+# block with the same id and identical usage, so dedupe by id or a turn with
+# thinking + text + a tool call counts three times. Dated in local time, like
+# the PRs.
+tokens_today() { # transcript today
+  { grep -h '"usage"' "$1" "${1%.jsonl}"/subagents/*.jsonl 2>/dev/null; } \
+        | jq -cR --arg today "$2" 'fromjson? | select(.message.usage? and .message.id? and .timestamp?)
+            | select((.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601
+                      | strflocaltime("%Y-%m-%d")) == $today)
+            | {id: .message.id, m: (.message.model // "unknown"), u: .message.usage}' 2>/dev/null \
+        | jq -sc 'def sums: {
+            input: (map(.u.input_tokens // 0) | add // 0),
+            output: (map(.u.output_tokens // 0) | add // 0),
+            cache_read: (map(.u.cache_read_input_tokens // 0) | add // 0),
+            cache_write: (map(.u.cache_creation_input_tokens // 0) | add // 0),
+            calls: length };
+          unique_by(.id) | sums + {by_model: (
+            # "<synthetic>" is a message Claude Code wrote itself (an error,
+            # an interruption), never a model call; it carries zero usage.
+            map(select(.m != "<synthetic>")) | group_by(.m)
+            | map({key: (.[0].m | sub("^claude-"; "") | sub("-[0-9]{8}$"; "")), value: sums})
+            | from_entries)}' 2>/dev/null
+}
+
+# ---- output tokens today, per machine ------------------------------------------
+# One sensor per machine: what every session on it wrote today, summed from the
+# state files this hook keeps (a session that ended still has its file; each
+# names its machine, since CLAUDE_HA_MACHINE can differ between sessions). It is
+# what the dashboard stacks by machine. No template in Home Assistant can do
+# this, because it cannot create a sensor for a machine it has not met.
+# state_class is measurement, like every other counter the charts read: the
+# chart asks long-term statistics for an hourly max, and a total_increasing
+# sensor keeps a sum instead and has none.
+machine_tokens_publish() { # machine mslug today
+  local out
+  out=$(cat "$STATE_DIR"/*.json 2>/dev/null \
+        | jq -s --arg d "$3" --arg m "$1" '
+            [.[] | select(type == "object" and .day == $d and .machine == $m)
+                 | (.tokens_today.output // 0)] | add // 0' 2>/dev/null)
+  case "$out" in ''|*[!0-9]*) return 0 ;; esac
+  local uid="claude_machine_${2}_output_tokens" base="claude/${2}/tokens" cfg
+  cfg=$(jq -nc --arg uid "$uid" --arg base "$base" --arg dev "claude_code_${2}" --arg machine "$1" '{
+      name: "output today", unique_id: $uid,
+      default_entity_id: ("sensor." + $uid), icon: "mdi:pencil-outline",
+      state_topic: ($base + "/state"), json_attributes_topic: ($base + "/attrs"),
+      unit_of_measurement: "tokens", state_class: "measurement",
+      device: { identifiers: [$dev], name: ("Claude Code · " + $machine),
+                manufacturer: "Claude Fleet", model: "Claude Code sessions" } }')
+  pub "${DISCOVERY_PREFIX}/sensor/${uid}/config" "$cfg"
+  pub "$base/attrs" "$(jq -nc --arg machine "$1" --arg d "$3" \
+                        '{claude_machine_tokens: true, machine: $machine, day: $d}')"
+  pub "$base/state" "$out"
 }
 
 # The Claude Code version INSTALLED on this machine, next to the one each
@@ -376,7 +437,7 @@ main() {
   # assistant turn carries the model and the CLI version. This is the session
   # stating what it did, rather than us inferring it from a branch that may since
   # have moved -- and it needs neither `gh` nor a git repo to be right.
-  local model ccver tprs="" ctx="" tok="" compact=""
+  local model ccver tprs="" ctx="" tok="" compact="" tok_counted=0
   if [ -f "$transcript" ]; then
     # Model and version are current state, so the tail is enough. Drop its first
     # line: a byte-offset tail lands mid-record nearly every time.
@@ -414,27 +475,7 @@ main() {
               | jq -r '.message.usage
                        | ((.input_tokens // 0) + (.cache_read_input_tokens // 0)
                           + (.cache_creation_input_tokens // 0))' 2>/dev/null)
-        # Tokens spent TODAY, this session and its subagents. Each API response
-        # is written once per content block with the same id and identical
-        # usage, so dedupe by id or a turn with thinking + text + a tool call
-        # counts three times. Dated in local time, like the PRs.
-        tok=$( { grep -h '"usage"' "$transcript" "${transcript%.jsonl}"/subagents/*.jsonl 2>/dev/null; } \
-              | jq -cR --arg today "$today" 'fromjson? | select(.message.usage? and .message.id? and .timestamp?)
-                  | select((.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601
-                            | strflocaltime("%Y-%m-%d")) == $today)
-                  | {id: .message.id, m: (.message.model // "unknown"), u: .message.usage}' 2>/dev/null \
-              | jq -sc 'def sums: {
-                  input: (map(.u.input_tokens // 0) | add // 0),
-                  output: (map(.u.output_tokens // 0) | add // 0),
-                  cache_read: (map(.u.cache_read_input_tokens // 0) | add // 0),
-                  cache_write: (map(.u.cache_creation_input_tokens // 0) | add // 0),
-                  calls: length };
-                unique_by(.id) | sums + {by_model: (
-                  # "<synthetic>" is a message Claude Code wrote itself (an error,
-                  # an interruption), never a model call; it carries zero usage.
-                  map(select(.m != "<synthetic>")) | group_by(.m)
-                  | map({key: (.[0].m | sub("^claude-"; "") | sub("-[0-9]{8}$"; "")), value: sums})
-                  | from_entries)}' 2>/dev/null)
+        tok=$(tokens_today "$transcript" "$today"); tok_counted=1
         # Compactions today: each one throws away the context the cache was built on.
         # Split by trigger: "manual" is you running /compact, a choice; "auto" is
         # the session hitting its context limit, and more than one in a day is
@@ -446,6 +487,12 @@ main() {
                       | (.compactMetadata.trigger? // "auto")' 2>/dev/null \
                   | jq -sc '{auto: map(select(. != "manual")) | length,
                              manual: map(select(. == "manual")) | length}' 2>/dev/null) ;;
+      *)
+        # Mid-turn: the tokens alone, and not on every tool call.
+        local tok_at; tok_at=$(g tok_at); case "$tok_at" in ''|*[!0-9]*) tok_at=0 ;; esac
+        if [ "$TOKENS_RECHECK" -gt 0 ] && [ $((now - tok_at)) -ge "$TOKENS_RECHECK" ]; then
+          tok=$(tokens_today "$transcript" "$today"); tok_counted=1
+        fi ;;
     esac
   fi
   case "$tprs" in ''|null) tprs='[]' ;; esac
@@ -532,21 +579,22 @@ main() {
   # ---- new local state ---------------------------------------------------------
   local state
   state=$(jq -c \
-    --arg state "$new" --argjson since "$since" --argjson now "$now" \
+    --arg state "$new" --argjson since "$since" --argjson now "$now" --arg machine "$machine" \
     --arg branch "$branch" --arg repo "$repo" --arg label "$label" \
     --arg pr_num "$pr_num" --arg pr_url "$pr_url" --arg pr_title "$pr_title" \
     --argjson pr_checked "${pr_checked:-0}" --arg day "$day" --arg workdir "$workdir" \
     --argjson wait "$wait_today" --argjson prompts "$prompts_today" \
     --arg model "${model:-}" --arg ccver "${ccver:-}" --argjson tprs "$tprs" --arg today "$today" \
     --argjson ctx "$ctx" --argjson ctxlimit "$CONTEXT_LIMIT" \
-    --argjson tok "$tok" --argjson compact "$compact" \
+    --argjson tok "$tok" --argjson compact "$compact" --argjson tok_counted "$tok_counted" \
     --arg last_prompt "$last_prompt" '
-    .state=$state | .state_since=$since | .last_pub=$now
+    .state=$state | .state_since=$since | .last_pub=$now | .machine=$machine
     | .branch=$branch | .repo=$repo | .label=$label | .workdir=$workdir
     | .pr_number=$pr_num | .pr_url=$pr_url | .pr_title=$pr_title | .pr_checked=$pr_checked
     | .day=$day | .wait_today=$wait | .prompts_today=$prompts | .last_prompt=$last_prompt
     | .model = $model | .cc_version = $ccver
     | .tokens_today = ($tok // .tokens_today // null)
+    | .tok_at = (if $tok_counted == 1 then $now else (.tok_at // 0) end)
     | .compactions = ($compact // .compactions // {auto: 0, manual: 0})
     | .context_tokens = (if $ctx > 0 then $ctx else (.context_tokens // 0) end)
     | .context_limit = ((.context_limit // $ctxlimit) as $cur
@@ -640,6 +688,7 @@ main() {
   printf '%s\n' "$state" > "$sf.tmp" && mv "$sf.tmp" "$sf"
 
   case "$ev" in Stop|SessionStart|SessionEnd) rtk_publish "$machine" "$mslug" "$now" ;; esac
+  [ "$tok_counted" = 1 ] && machine_tokens_publish "$machine" "$mslug" "$today"
 
   # housekeeping
   [ "$ev" = SessionStart ] && find "$STATE_DIR" -name '*.json' -mtime +7 -delete 2>/dev/null

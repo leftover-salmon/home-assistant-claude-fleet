@@ -42,7 +42,8 @@ KEY_ENTITIES = [
     "sensor.claude_weekly_pace", "sensor.claude_fleet_records", "sensor.claude_archived_today",
     "sensor.claude_weekly_points_by_day", "sensor.claude_rtk_saved_today", "sensor.claude_rtk_share_today",
     "sensor.claude_tokens_today_opus", "sensor.claude_tokens_today_sonnet", "sensor.claude_tokens_today_haiku",
-    "sensor.claude_output_tokens_today_opus", "binary_sensor.claude_anyone_waiting",
+    "sensor.claude_output_tokens_today_opus", "sensor.claude_output_tokens_today",
+    "sensor.claude_output_token_rate", "sensor.claude_prs_today", "binary_sensor.claude_anyone_waiting",
     "binary_sensor.claude_fleet_setup_needed", "input_text.claude_fleet_quip",
     "input_boolean.claude_lamp_enabled", "input_datetime.claude_recap_time",
     "input_boolean.claude_fleet_update_check", "input_text.claude_fleet_defaults_applied",
@@ -167,13 +168,15 @@ def expected_from(sessions, gen_sessions):
     """What HA should show, from what gen.py generated: sessions.json (per-session
     tokens as the hook counts them, the seeded counters, the final state) and
     gen.SESSIONS (the PRs, and whether each was opened today)."""
-    exp = {"sessions": {}, "tokens": 0, "output": 0, "prompts": 0, "prs": set()}
+    exp = {"sessions": {}, "tokens": 0, "output": 0, "prompts": 0, "prs": set(), "by_machine": {}}
     for p in sessions:
         k = p["tokens"]
         exp["sessions"][p["sid"]] = {"label": p["label"], "final": p["final"], "stale": p["stale"],
                                      "prompts": p["prompts"], "tokens": k}
         exp["tokens"] += k["input"] + k["output"] + k["cache_read"] + k["cache_write"]
         exp["output"] += k["output"]
+        m = p.get("machine", "one")
+        exp["by_machine"][m] = exp["by_machine"].get(m, 0) + k["output"]
         exp["prompts"] += p["prompts"]
     for s in gen_sessions:
         for num, ago in s.get("prs", []):
@@ -207,6 +210,12 @@ def check_records(states, exp, today):
     if x.get("id") != today:
         out.append("output record set on %s, expected today (%s) to have overtaken the seeded one" % (x.get("id"), today))
     return out
+
+
+# The entity the "Output tokens by machine" chart asks for; check_dashboard holds
+# the dashboard to this exact string, check_sessions holds the hook's sensors to it.
+MACHINE_TOKENS_WILDCARD = "sensor.claude_machine_*_output_tokens"
+MACHINE_TOKENS_ID = re.compile(r"^sensor\.claude_machine_.+_output_tokens$")
 
 
 def check_sessions(states, exp):
@@ -266,6 +275,27 @@ def check_sessions(states, exp):
         prs.update(s["attributes"].get("prs_today") or [])
     if prs != exp["prs"]:
         out.append("PRs today %s, expected %s" % (sorted(prs), sorted(exp["prs"])))
+    # ---- the numbers the burn-rate dial and the PR chart read
+    if st("sensor.claude_output_tokens_today") != str(exp["output"]):
+        out.append("sensor.claude_output_tokens_today = %s, expected %d (the sum of every session's output)"
+                   % (st("sensor.claude_output_tokens_today"), exp["output"]))
+    if st("sensor.claude_prs_today") != str(len(exp["prs"])):
+        out.append("sensor.claude_prs_today = %s, expected %d" % (st("sensor.claude_prs_today"), len(exp["prs"])))
+    rate = st("sensor.claude_output_token_rate") or ""
+    if not re.match(r"^[0-9]+$", rate):
+        out.append("sensor.claude_output_token_rate = %r, expected a whole number, never negative" % rate)
+    # ---- output per machine: the hook's own sensors, one a machine, named so the
+    # dashboard's wildcard finds them
+    got = {}
+    for s in states:
+        if s["attributes"].get("claude_machine_tokens"):
+            got[s["attributes"].get("machine")] = s["state"]
+            if not MACHINE_TOKENS_ID.match(s["entity_id"]):
+                out.append("%s: a machine's output sensor the chart's wildcard (%s) would miss"
+                           % (s["entity_id"], MACHINE_TOKENS_WILDCARD))
+    want = dict((m, str(v)) for m, v in exp["by_machine"].items())
+    if got != want:
+        out.append("output per machine %s, expected %s" % (sorted(got.items()), sorted(want.items())))
     return out
 
 
@@ -582,6 +612,10 @@ def _check_history(c, where, out):
         for j, e in enumerate(g.get("entities") or []):
             if isinstance(e, dict):
                 out += _unknown("%s entities[%d]" % (gw, j), e, HX_ENTITY_KEYS)
+                ent = str(e.get("entity", ""))
+                if "*" in ent and ent != MACHINE_TOKENS_WILDCARD:
+                    out.append("%s entities[%d]: wildcard %r is not %r, the one name the hook's "
+                               "per-machine sensors are checked against" % (gw, j, ent, MACHINE_TOKENS_WILDCARD))
 
 
 def check_dashboard(config):
@@ -637,12 +671,16 @@ def _synthetic():
              "binary_sensor.claude_anyone_waiting": "on", "binary_sensor.claude_fleet_setup_needed": "off",
              "sensor.claude_tokens_today": str(exp["tokens"]), "sensor.claude_tokens_today_opus": str(exp["tokens"] - 100),
              "sensor.claude_tokens_today_haiku": "100", "sensor.claude_plan_source": "ok",
-             "sensor.claude_weekly_pace": "tight", "sensor.claude_session_pace": "ok"}
+             "sensor.claude_weekly_pace": "tight", "sensor.claude_session_pace": "ok",
+             "sensor.claude_output_tokens_today": str(exp["output"]), "sensor.claude_prs_today": str(len(exp["prs"])),
+             "sensor.claude_output_token_rate": "0"}
     for e in KEY_ENTITIES:
         fixed.setdefault(e, "0")
     for i in range(30):
         fixed.setdefault("sensor.claude_extra_%d" % i, "0")
     states += [{"entity_id": k, "state": v, "attributes": {}} for k, v in fixed.items()]
+    states += [{"entity_id": "sensor.claude_machine_%s_output_tokens" % m, "state": str(v),
+                "attributes": {"claude_machine_tokens": True, "machine": m}} for m, v in exp["by_machine"].items()]
     states = [s for s in states if s["entity_id"] != "sensor.claude_fleet_records"]
     states.append({"entity_id": "sensor.claude_fleet_records", "state": "1", "attributes": {"records": {
         "output_day": {"value": exp["output"], "label": "", "id": SELFTEST_DAY, "at": SELFTEST_DAY + "T12:00:00"}}}})
@@ -715,6 +753,7 @@ views:
                     lineMode: stepped
 """
 BAD_DASHBOARDS = {
+    "a wildcard the hook's per-machine sensors are not named for": ("- entity: sensor.claude_tokens_today_opus", "- entity: \"sensor.claude_*_output\""),
     "interval at graph level (the real bug)": ("options: { stacked: true, interval: daily }", "interval: daily\n                options: { stacked: true }"),
     "a by-day bar graph with no daily interval": ("options: { stacked: true, interval: daily }", "options: { stacked: true }"),
     "a misspelt markdown key": ("content: \"{{ 1 }}\"", "contents: \"{{ 1 }}\""),
@@ -768,6 +807,15 @@ def self_test():
         "yesterday's PR counted today": _set(states, "sensor.claude_code_sid-d", prs_today=["#8"]),
         "a PR missing": _set(states, "sensor.claude_code_sid-c", prs_today=["#9"]),
         "setup needed on": _set(states, "binary_sensor.claude_fleet_setup_needed", "on"),
+        "output today off by one": _set(states, "sensor.claude_output_tokens_today", str(exp["output"] + 1)),
+        "PRs today counting yesterday's": _set(states, "sensor.claude_prs_today", str(len(exp["prs"]) + 1)),
+        "a negative rate": _set(states, "sensor.claude_output_token_rate", "-12"),
+        "a rate that is unknown": _set(states, "sensor.claude_output_token_rate", "unknown"),
+        "a machine's output off by one": _set(states, "sensor.claude_machine_one_output_tokens", str(exp["output"] + 1)),
+        "a machine's output sensor missing": _drop(states, "sensor.claude_machine_one_output_tokens"),
+        "a machine's sensor under a name the chart cannot find": [
+            dict(s, entity_id="sensor.output_tokens_today_one") if s["entity_id"] == "sensor.claude_machine_one_output_tokens"
+            else s for s in states],
     }
     for name, st in bad.items():
         expect("sessions: %s fails" % name, check_sessions(st, exp), True)

@@ -823,6 +823,50 @@ views:
             cards: *kpi_tiles
 
           # ------------------------------------------------ sessions over time
+          # ------------------------------------------------------------ burn rate
+          # How fast the fleet is writing right now, and the last hour of it. Output
+          # tokens a minute (see the package for why output). The dial tops out at
+          # 8,000: across a day of real use the rate was zero 70% of the time and
+          # under 2,000 for 90% of it, so a higher ceiling would leave the needle
+          # lying on the floor. Above it the needle pins and the number still reads
+          # true. The bands are one colour getting stronger, on purpose: fast is
+          # not bad, and the plan gauges above already say when it is too fast.
+          - type: grid
+            columns: 2
+            square: false
+            grid_options: { columns: full }
+            cards:
+              - type: gauge
+                entity: sensor.claude_output_token_rate
+                name: Output tokens a minute
+                min: 0
+                max: 8000
+                needle: true
+                segments:
+                  - from: 0
+                    color: "#b9d3f2"
+                  - from: 1000
+                    color: "#7fb0ea"
+                  - from: 3000
+                    color: "#3987e5"
+                  - from: 6000
+                    color: "#1f5fb0"
+              - type: custom:history-explorer-card
+                header: "Last hour"
+                defaultTimeRange: 1h
+                uiLayout:
+                  toolbar: hide
+                  selector: hide
+                graphs:
+                  - type: line
+                    options: { ymin: 0 }
+                    entities:
+                      - entity: sensor.claude_output_token_rate
+                        name: Output tokens a minute
+                        lineMode: stepped
+                        color: "#3987e5"
+                        fill: "rgba(57, 135, 229, 0.15)"
+
           # Needs "History explorer card" from HACS. One line: how many sessions ran
           # at once. The stacked waiting/stale/working/idle chart (with its six range
           # buttons) was replaced by this on purpose -- concurrency is the question
@@ -1129,6 +1173,55 @@ views:
                   - entity: sensor.claude_output_tokens_today_other
                     name: Other
                     color: "#8a8a8a"
+
+          # ------------------------------------------------- output by machine
+          # Which computer did the writing, and when. One sensor per machine,
+          # published by the hook (a machine cannot be listed here ahead of time),
+          # found by the wildcard. Bars, ten minutes each: the sensor is a counter
+          # for the day, and bar mode sums its rises within each bar, so a bar is
+          # the tokens written in those ten minutes. A rate per machine would need
+          # a sensor per machine in the package, which is the thing that cannot be
+          # written ahead of time.
+          - type: custom:history-explorer-card
+            grid_options: { columns: full }
+            header: "Output tokens by machine"
+            labelAreaWidth: 95
+            defaultTimeRange: 6h
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: max
+              period: hour
+            graphs:
+              - type: bar
+                options: { stacked: true, interval: 10m }
+                entities:
+                  - entity: "sensor.claude_machine_*_output_tokens"
+
+          # -------------------------------------------------------- PRs by day
+          # PRs opened by the fleet's sessions, a bar a day. Same counter-to-bars
+          # reading as the token charts: the count returns to zero at midnight.
+          # Only what the sessions themselves opened; nothing is asked of GitHub.
+          - type: custom:history-explorer-card
+            grid_options: { columns: full }
+            header: "PRs opened by day"
+            defaultTimeRange: 1o
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: max
+              period: hour
+            graphs:
+              - type: bar
+                options: { interval: daily }
+                entities:
+                  - entity: sensor.claude_prs_today
+                    name: PRs
+                    color: "#199e70"
 
           # ---------------------------------------------------- cache hit by day
           # A LINE, not bars: a percentage does not add up over a day, and bar mode

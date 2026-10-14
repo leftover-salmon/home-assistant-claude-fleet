@@ -529,6 +529,119 @@ template:
           {%- set v = b.get('cache_hit_pct') if b is mapping else none %}
           {{ v }}
 
+  # What the models WROTE today, the whole fleet: the output slice of the sensor
+  # above as a number of its own, so the rate below can read it. Output, not
+  # all tokens, for the reason the records give: ~98% of the total is cache
+  # reads, the same context re-read every turn, and it measures how long
+  # contexts got. What was written is the work.
+  - sensor:
+      - name: Claude output tokens today
+        unique_id: claude_output_tokens_today
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:pencil-outline
+        state: >
+          {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
+          {{ (b.get('output', 0) if b is mapping else 0) | int(0) }}
+
+  # PRs the fleet's sessions opened today, live and archived, each counted once.
+  # The same list the Today card and the records read. A number of its own so
+  # the Tokens tab can draw PRs by day: a chart series is an entity.
+  # It only climbs within a day. Counted fresh it falls to zero for a second
+  # after every restart, while the sessions are still arriving from the broker,
+  # and the by-day chart adds up every rise: 2, back to 0, 2 again, then 3 drew
+  # a day of five PRs. A trigger sensor is restored after a restart, and this
+  # one keeps the higher of what it had and what it counts, until the day turns.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+      - trigger: state
+        entity_id:
+          - sensor.claude_sessions_running
+          - sensor.claude_tokens_today
+    sensor:
+      - name: Claude PRs today
+        unique_id: claude_prs_today
+        unit_of_measurement: PRs
+        state_class: measurement
+        icon: mdi:source-pull
+        state: >
+          {%- set today = now().strftime('%Y-%m-%d') %}
+          {%- set ns = namespace(prs=[], ids=[]) %}
+          {%- for s in states.sensor | selectattr('attributes.claude_session', 'defined') %}
+            {%- set a = s.attributes %}
+            {%- if a.get('day', '') == today %}
+              {%- set ns.prs = ns.prs + ((a.get('prs_today') or []) | list) %}
+              {%- set ns.ids = ns.ids + [a.get('session_id', '')] %}
+            {%- endif %}
+          {%- endfor %}
+          {%- set arch = state_attr('sensor.claude_archived_today', 'sessions') or [] %}
+          {%- if state_attr('sensor.claude_archived_today', 'day') == today %}
+            {%- for a in arch if a is mapping and a.get('session_id') not in ns.ids %}
+              {%- set ns.prs = ns.prs + ((a.get('prs_today') or []) | list) %}
+            {%- endfor %}
+          {%- endif %}
+          {%- set n = ns.prs | unique | list | count %}
+          {{ [n, this.state | int(0)] | max if this.attributes.get('day') == today else n }}
+        attributes:
+          day: "{{ now().strftime('%Y-%m-%d') }}"
+
+  # How fast the fleet is writing right now: output tokens a minute over the last
+  # five minutes. Built like the plan usage rate above, from readings this sensor
+  # keeps itself, and not with a derivative, because the count goes DOWN twice:
+  # to zero at midnight, and for a few seconds after a restart, while the
+  # sessions are still arriving from the broker. A derivative carries either
+  # drop as a negative rate for its whole window, and the climb back after a
+  # restart as the whole day written in a minute.
+  # So it reads once a minute and on nothing else. A reading below the last one
+  # is a drop: every reading is thrown away, that one included, the rate is 0,
+  # and the next minute starts again from whatever the count is by then. A
+  # restart costs a minute or two of rate and never draws a spike.
+  # Reading on the minute also makes it fall to zero five minutes after the last
+  # token instead of holding its last value.
+  # The hook counts tokens every couple of minutes while a turn runs
+  # (TOKENS_RECHECK); a hook older than that reports only when a turn ends, and
+  # its tokens arrive here as one spike.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+    sensor:
+      - name: Claude output token rate
+        unique_id: claude_output_token_rate
+        unit_of_measurement: "tokens/min"
+        state_class: measurement
+        icon: mdi:speedometer
+        state: >
+          {%- set u = states('sensor.claude_output_tokens_today') | float(none) %}
+          {%- set t = as_timestamp(now()) | round(0) | int %}
+          {%- set prev = this.attributes.get('readings', []) %}
+          {%- set ns = namespace(k=[]) %}
+          {%- for p in (prev if prev is iterable and prev is not string else []) %}
+            {%- if p is sequence and p | count == 2 and t - (p[0] | int(0)) <= 330 %}
+              {%- set ns.k = ns.k + [p] %}
+            {%- endif %}
+          {%- endfor %}
+          {%- set dropped = u is not none and ns.k | count > 0 and (ns.k[-1][1] | float(0)) > u %}
+          {%- if u is none %}{{ none }}
+          {%- elif dropped or not ns.k %}0
+          {%- else %}
+          {%- set span = ([t - (ns.k[0][0] | int), 60] | max) / 60 %}
+          {{ ((u - (ns.k[0][1] | float)) / span) | round(0) | int }}
+          {%- endif %}
+        attributes:
+          readings: >
+            {%- set u = states('sensor.claude_output_tokens_today') | float(none) %}
+            {%- set t = as_timestamp(now()) | round(0) | int %}
+            {%- set prev = this.attributes.get('readings', []) %}
+            {%- set ns = namespace(k=[]) %}
+            {%- for p in (prev if prev is iterable and prev is not string else []) %}
+              {%- if p is sequence and p | count == 2 and t - (p[0] | int(0)) <= 330 %}
+                {%- set ns.k = ns.k + [p] %}
+              {%- endif %}
+            {%- endfor %}
+            {%- set dropped = u is not none and ns.k | count > 0 and (ns.k[-1][1] | float(0)) > u %}
+            {{ [] if dropped else (ns.k + ([[t, u]] if u is not none else []))[-6:] }}
+
   # Today's tokens per model FAMILY, one sensor each, for the stacked bars on
   # the Tokens tab: a chart series is an entity, and entities cannot appear on
   # the fly as new model names do. A name is filed by the family it contains

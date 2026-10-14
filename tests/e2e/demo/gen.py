@@ -360,8 +360,13 @@ def build_history(now, live):
         ocum = dict(cum)
         rtk_cum = 0.0
         rtk_day = sum(acts) * 30000 * tr["f"]
+        # PRs opened that day: a busier day opens more, six at the very most.
+        # Today's figure is the scenario's own (three PRs opened today).
+        prs_day = 3 if is_today else min(6, int(round(sum(acts) * 0.5)))
+        act_cum = 0.0
         first_active = None
         running_max = 0
+        out_prev = 0.0
         for i, (h, a) in enumerate(zip(hs, acts)):
             r = day_rng(d, "r%d" % h.hour)
             # -- sessions running (hourly max)
@@ -396,6 +401,16 @@ def build_history(now, live):
             for f in ("fable", "other"):
                 row("sensor.claude_tokens_today_" + f, h, 0, 0)
                 row("sensor.claude_output_tokens_today_" + f, h, 0, 0)
+            # -- output per machine: the same output, split by who wrote it
+            out_hi = sum(ocum.values())
+            for m, share in MACHINE_SHARE.items():
+                row(machine_tokens_entity(m), h, out_prev * share, out_hi * share)
+            out_prev = out_hi
+            # -- PRs opened so far that day (a counter, whole numbers)
+            day_act = (tod_sum if is_today else sum(acts)) or 1
+            lo_p = int(prs_day * act_cum / day_act)
+            act_cum += a
+            row("sensor.claude_prs_today", h, lo_p, int(prs_day * act_cum / day_act))
             # -- cache hit, the day's running figure: low while context is rebuilt
             since = (h - first_active).total_seconds() / 3600
             hit = tr["hit"] - 3.5 * math.exp(-since / 1.3) + r.uniform(-0.4, 0.4)
@@ -518,6 +533,18 @@ ENTITIES = {
 for _f in ("opus", "sonnet", "haiku", "fable", "other"):
     ENTITIES["sensor.claude_tokens_today_" + _f] = "tokens"
     ENTITIES["sensor.claude_output_tokens_today_" + _f] = "tokens"
+ENTITIES["sensor.claude_prs_today"] = "PRs"
+
+
+def machine_tokens_entity(machine):
+    """The per-machine output sensor the hook publishes, as Home Assistant names it."""
+    return "sensor.claude_machine_%s_output_tokens" % machine
+
+
+# Who wrote how much of a past day's output, for the by-machine chart's history.
+MACHINE_SHARE = {"studio": 0.49, "mini": 0.31, "laptop": 0.20}
+for _m in MACHINE_SHARE:
+    ENTITIES[machine_tokens_entity(_m)] = "tokens"
 
 
 # ---- RTK ledgers ------------------------------------------------------------------
@@ -753,7 +780,8 @@ def cmd_restore():
 # real install has ten days of states (the recorder's default) and statistics
 # behind them, so the demo gets the same: the invented history as states too.
 COUNTERS = [e for e in ENTITIES if e.startswith(("sensor.claude_tokens_today", "sensor.claude_output_tokens",
-                                                 "sensor.claude_rtk_saved"))]
+                                                 "sensor.claude_rtk_saved", "sensor.claude_machine_",
+                                                 "sensor.claude_prs_today"))]
 
 
 def fnv1a_32(data):

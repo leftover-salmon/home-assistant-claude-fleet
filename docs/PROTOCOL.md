@@ -15,8 +15,11 @@ computer. A consumer that connects late gets the current state of every session 
 | `claude/<machine>/<session_id>/attrs` | JSON, [below](#session-attributes) | with every state publish, and again when a summary is written |
 | `claude/<machine>/rtk/state` | tokens RTK kept out of context today, as a number | at most every 10 minutes, only on computers with RTK |
 | `claude/<machine>/rtk/attrs` | JSON, [below](#rtk-attributes) | with the RTK state |
+| `claude/<machine>/tokens/state` | output tokens every session on this computer wrote today, as a number | whenever a session's tokens are counted: when a turn ends, and every `TOKENS_RECHECK` seconds (120) while one runs |
+| `claude/<machine>/tokens/attrs` | `{"claude_machine_tokens": true, "machine": "M4 Mac Mini", "day": "2026-10-13"}` | with the tokens state |
 | `homeassistant/sensor/claude_<machine>_<first 8 of session_id>/config` | Home Assistant MQTT discovery | once per session, again when its label changes, and after two hours of silence |
 | `homeassistant/sensor/claude_<machine>_rtk/config` | Home Assistant MQTT discovery | with every RTK publish |
+| `homeassistant/sensor/claude_machine_<machine>_output_tokens/config` | Home Assistant MQTT discovery; names the entity `sensor.claude_machine_<machine>_output_tokens` | with every tokens publish |
 
 `<machine>` is the computer's name (`CLAUDE_HA_MACHINE`, or the hostname) made into a slug:
 lower case, every run of characters other than `a-z0-9` replaced by `_`, and leading and
@@ -28,7 +31,7 @@ payload as `machine`.
 topics entirely.
 
 To follow everything: subscribe to `claude/#`. Sessions are `claude/+/+/attrs` where the
-middle level is not `rtk`.
+middle level is not `rtk` or `tokens`.
 
 ## Session states
 

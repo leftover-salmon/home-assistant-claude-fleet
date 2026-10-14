@@ -16,10 +16,12 @@ What you get:
 
 - **Sessions tab:** every session live (working, waiting on you, idle, stale), its model,
   context use and tokens today; what it is working on; the day so far; personal records;
-  one row per computer; how many sessions ran at once; your Claude plan limits and whether
-  you are on course to hit them.
+  one row per computer; how fast the fleet is writing right now (output tokens a minute);
+  how many sessions ran at once; your Claude plan limits and whether you are on course to
+  hit them.
 - **Tokens tab:** today's tokens by model and by kind, cache hit rate and compactions, and
-  the same by day over any range you pick. Plus what [RTK](https://github.com/rtk-ai/rtk)
+  the same by day over any range you pick; output by computer in ten-minute bars; PRs
+  opened by day. Plus what [RTK](https://github.com/rtk-ai/rtk)
   saved, if you use it.
 - **Setup tab:** a checklist of what is working and what you could add next, and the
   switches.

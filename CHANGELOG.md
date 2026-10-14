@@ -21,6 +21,17 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+- **Burn rate, on the Sessions tab:** a dial of output tokens a minute across every
+  session, over the last five minutes, with the last hour beside it. Output and not all
+  tokens, because about 98% of the total is the same context re-read from cache every turn.
+  The hook now counts tokens every two minutes while a turn runs (`TOKENS_RECHECK`, 0 to
+  turn it off); before, a long turn's tokens all arrived when it ended. Update: both Home
+  Assistant files and the hook. A computer on an older hook still counts, as one spike a turn.
+- **Output tokens by machine, on the Tokens tab:** ten-minute bars stacked by computer. Each
+  computer's hook publishes its own total (`sensor.claude_machine_<name>_output_tokens`),
+  so a new computer appears in the chart without editing anything.
+- **PRs opened by day, on the Tokens tab:** a bar a day, from `sensor.claude_prs_today`.
+  Only PRs the sessions themselves opened; nothing is asked of GitHub.
 - **Away from home:** a new README section on why a laptop stops reporting when it leaves
   the house (Home Assistant Cloud doesn't carry MQTT) and how to keep it reporting with
   Tailscale, plus a matching troubleshooting entry. Documentation only.
