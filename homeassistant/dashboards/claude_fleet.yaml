@@ -114,6 +114,20 @@ views:
               {%- if st %} — {{ relative_time(st.last_changed) }} ago{% endif %}
               {%- endif %}
 
+          # ------------------------------------------------------------ burn rate
+          # How fast the fleet is writing right now, as water: still at zero, a
+          # trickle when one session is thinking, a fast, full, bright stream when
+          # many are. Output tokens a minute (see the package for why output). The
+          # card is this repo's own, homeassistant/www/claude-fleet-flow-card.js,
+          # and its header says how a rate becomes a depth and a speed. It sits
+          # straight under the headline, full width, because it is the one card
+          # that tells you at a glance how hard the fleet is working; the last
+          # hour of the same number is further down with the other charts.
+          - type: custom:claude-fleet-flow-card
+            entity: sensor.claude_output_token_rate
+            name: Output tokens a minute
+            grid_options: { columns: full, rows: 3 }
+
           # -------------------------------------------------------- plan usage
           # Wide screens: gauge, gauge, At this rate, in thirds. Phones: the two gauges
           # side by side and At this rate under them at full width, since a third of a
@@ -823,37 +837,27 @@ views:
             cards: *kpi_tiles
 
           # ------------------------------------------------ sessions over time
-          # ------------------------------------------------------------ burn rate
-          # How fast the fleet is writing right now, as water: still at zero, a
-          # trickle when one session is thinking, a fast, full, bright stream when
-          # many are. Output tokens a minute (see the package for why output). The
-          # card is this repo's own, homeassistant/www/claude-fleet-flow-card.js,
-          # and its header says how a rate becomes a depth and a speed. It began as
-          # a gauge, which showed the number and none of the feeling of it. The
-          # last hour sits beside it, because the stream only ever shows now.
-          - type: grid
-            columns: 2
-            square: false
+          # ------------------------------------------------------------ last hour
+          # The stream at the top only ever shows now; this is the hour behind it.
+          # It redraws itself: on every new reading, and each minute so the window
+          # moves on through quiet stretches when the reading does not change.
+          - type: custom:history-explorer-card
             grid_options: { columns: full }
-            cards:
-              - type: custom:claude-fleet-flow-card
-                entity: sensor.claude_output_token_rate
-                name: Output tokens a minute
-              - type: custom:history-explorer-card
-                header: "Last hour"
-                defaultTimeRange: 1h
-                uiLayout:
-                  toolbar: hide
-                  selector: hide
-                graphs:
-                  - type: line
-                    options: { ymin: 0 }
-                    entities:
-                      - entity: sensor.claude_output_token_rate
-                        name: Output tokens a minute
-                        lineMode: stepped
-                        color: "#3987e5"
-                        fill: "rgba(57, 135, 229, 0.15)"
+            header: "Last hour"
+            defaultTimeRange: 1h
+            refresh: { automatic: true, interval: 60 }
+            uiLayout:
+              toolbar: hide
+              selector: hide
+            graphs:
+              - type: line
+                options: { ymin: 0 }
+                entities:
+                  - entity: sensor.claude_output_token_rate
+                    name: Output tokens a minute
+                    lineMode: stepped
+                    color: "#3987e5"
+                    fill: "rgba(57, 135, 229, 0.15)"
 
           # Needs "History explorer card" from HACS. One line: how many sessions ran
           # at once. The stacked waiting/stale/working/idle chart (with its six range
