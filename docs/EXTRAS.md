@@ -93,7 +93,9 @@ it has its own package, below.
 `packages/claude_fleet_awtrix.yaml` puts the fleet on an **AWTRIX NG** pixel clock (a Ulanzi
 TC001 works): the top-right corner light in the fleet's colour (amber blinks, red breathes),
 and the name of any session that starts waiting on you. Session and weekly usage, each with a
-progress bar in its pace colour, join the clock's own screens in rotation. (The aside was
+progress bar in its pace colour, join the clock's own screens in rotation, and so does the
+stream: output tokens a minute over the clock's Pacifica waves, running faster as the fleet
+writes faster, and gone from the rotation while nothing is being written. (The aside was
 tried there and dropped: a sentence scrolling across 32 pixels is not readable at a glance.)
 It finds the clock itself, as the first device with model "AWTRIX NG", so there is nothing to
 configure beyond pointing the clock at your MQTT broker with Home Assistant discovery on. Turn
