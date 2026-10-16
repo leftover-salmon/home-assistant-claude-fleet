@@ -115,8 +115,10 @@ views:
               {%- endif %}
 
           # ------------------------------------------- burn rate and plan usage
-          # One row on a wide screen, in twelfths of the section: the stream (4),
-          # the session gauge (2), the weekly gauge (2), and At this rate (4). The
+          # One row on a wide screen: the stream (16), the session gauge (8), the
+          # weekly gauge (8), and At this rate (16). A section's grid has 12 columns
+          # per view column it spans, so this four-wide one has 48: 4 and 2 here,
+          # read as twelfths, drew everything a quarter of the width. The
           # stream is how hard the fleet is writing now; the gauges are what that
           # is costing the plan, so they read as one row. Each piece is placed by
           # its own grid_options, which a sections view honours only on a card that
@@ -135,7 +137,7 @@ views:
           - type: custom:claude-fleet-flow-card
             entity: sensor.claude_output_token_rate
             name: Output tokens a minute
-            grid_options: { columns: 4 }
+            grid_options: { columns: 16 }
             visibility:
               - condition: state
                 entity: sensor.claude_plan_session_usage
@@ -184,7 +186,7 @@ views:
           - type: grid
             columns: 1
             square: false
-            grid_options: { columns: 2 }
+            grid_options: { columns: 8 }
             visibility:
               - condition: state
                 entity: sensor.claude_plan_session_usage
@@ -257,7 +259,7 @@ views:
           - type: grid
             columns: 1
             square: false
-            grid_options: { columns: 2 }
+            grid_options: { columns: 8 }
             visibility:
               - condition: state
                 entity: sensor.claude_plan_session_usage
@@ -340,7 +342,7 @@ views:
           - type: grid
             columns: 1
             square: false
-            grid_options: { columns: 4 }
+            grid_options: { columns: 16 }
             visibility:
               - condition: state
                 entity: sensor.claude_plan_session_usage
