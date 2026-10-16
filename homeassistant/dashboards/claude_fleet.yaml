@@ -114,31 +114,28 @@ views:
               {%- if st %} — {{ relative_time(st.last_changed) }} ago{% endif %}
               {%- endif %}
 
-          # ------------------------------------------------------------ burn rate
-          # How fast the fleet is writing right now, as water: still at zero, a
-          # trickle when one session is thinking, a fast, full, bright stream when
-          # many are. Output tokens a minute (see the package for why output). The
-          # card is this repo's own, homeassistant/www/claude-fleet-flow-card.js,
-          # and its header says how a rate becomes a depth and a speed. It sits
-          # straight under the headline, full width, because it is the one card
-          # that tells you at a glance how hard the fleet is working; the last
+          # ------------------------------------------- burn rate and plan usage
+          # One row on a wide screen, in twelfths of the section: the stream (4),
+          # the session gauge (2), the weekly gauge (2), and At this rate (4). The
+          # stream is how hard the fleet is writing now; the gauges are what that
+          # is costing the plan, so they read as one row. Each piece is placed by
+          # its own grid_options, which a sections view honours only on a card that
+          # sits directly in the section, so each one is wrapped in a one-column
+          # grid that carries the width and the wide-screen visibility; the cards
+          # inside keep their anchors for the phone layout below.
+          #
+          # The stream itself: how fast the fleet is writing right now, as water:
+          # still at zero, a trickle when one session is thinking, a fast, full,
+          # bright stream when many are. Output tokens a minute (see the package for
+          # why output). The card is this repo's own,
+          # homeassistant/www/claude-fleet-flow-card.js, and its header says how a
+          # rate becomes a depth and a speed. A third of a wide screen still fits
+          # each computer's stream (the card drops them under 360px). The last
           # hour of the same number is further down with the other charts.
           - type: custom:claude-fleet-flow-card
             entity: sensor.claude_output_token_rate
             name: Output tokens a minute
-            grid_options: { columns: full, rows: 3 }
-
-          # -------------------------------------------------------- plan usage
-          # Wide screens: gauge, gauge, At this rate, in thirds. Phones: the two gauges
-          # side by side and At this rate under them at full width, since a third of a
-          # phone left it one word per line. The cards are written once and reused
-          # with YAML anchors (&name ... *name), so the two layouts cannot drift.
-          # Each gauge exists three times (one per colour) and only one is shown;
-          # hidden cards take no space in a grid.
-          - type: grid
-            columns: 3
-            square: false
-            grid_options: { columns: full }
+            grid_options: { columns: 4 }
             visibility:
               - condition: state
                 entity: sensor.claude_plan_session_usage
@@ -148,7 +145,27 @@ views:
                 state_not: unavailable
               - condition: screen
                 media_query: "(min-width: 768px)"
-            cards:
+          # The same stream at full width: on a phone, and on a wide screen when
+          # there is no plan source, so no gauges to share the row with.
+          - type: custom:claude-fleet-flow-card
+            entity: sensor.claude_output_token_rate
+            name: Output tokens a minute
+            grid_options: { columns: full }
+            visibility:
+              - condition: or
+                conditions:
+                  - condition: screen
+                    media_query: "(max-width: 767px)"
+                  - condition: state
+                    entity: sensor.claude_plan_session_usage
+                    state: ["unknown", "unavailable"]
+
+          # Wide screens: gauge, gauge, At this rate, in thirds. Phones: the two gauges
+          # side by side and At this rate under them at full width, since a third of a
+          # phone left it one word per line. The cards are written once and reused
+          # with YAML anchors (&name ... *name), so the two layouts cannot drift.
+          # Each gauge exists three times (one per colour) and only one is shown;
+          # hidden cards take no space in a grid.
               # Reads the neutral sensor.claude_plan_* entities, which the package's
               # PLAN USAGE SOURCE block maps from whatever integration you use. Every
               # card here hides itself when that source is absent.
@@ -164,6 +181,20 @@ views:
               # gauge exists three times, one per colour, and visibility shows the one
               # matching the pace sensor. Exactly one of the three is ever visible;
               # "unknown" falls to green, the no-news colour.
+          - type: grid
+            columns: 1
+            square: false
+            grid_options: { columns: 2 }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unavailable
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            cards:
               - &session_gauges
                 type: grid
                 columns: 1
@@ -223,6 +254,20 @@ views:
                       - condition: state
                         entity: sensor.claude_session_pace
                         state: over
+          - type: grid
+            columns: 1
+            square: false
+            grid_options: { columns: 2 }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unavailable
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            cards:
               - &weekly_gauges
                 type: grid
                 columns: 1
@@ -292,6 +337,20 @@ views:
               # blank line before it. HA renders this with breaks:true, so a single
               # newline inside a paragraph is a visible line break — which is how
               # a stray one left "· resets first" stranded on its own line.
+          - type: grid
+            columns: 1
+            square: false
+            grid_options: { columns: 4 }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unavailable
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            cards:
               - &plan_text
                 type: markdown
                 visibility:
