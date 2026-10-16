@@ -115,8 +115,8 @@ views:
               {%- endif %}
 
           # ------------------------------------------- burn rate and plan usage
-          # One row on a wide screen: the stream (16), the session gauge (8), the
-          # weekly gauge (8), and At this rate (16). A section's grid has 12 columns
+          # One row on a wide screen: the session gauge (8), the weekly gauge (8),
+          # At this rate (16), and the stream (16) last. A section's grid has 12 columns
           # per view column it spans, so this four-wide one has 48: 4 and 2 here,
           # read as twelfths, drew everything a quarter of the width. The
           # stream is how hard the fleet is writing now; the gauges are what that
@@ -134,19 +134,6 @@ views:
           # rate becomes a depth and a speed. A third of a wide screen still fits
           # each computer's stream (the card drops them under 360px). The last
           # hour of the same number is further down with the other charts.
-          - type: custom:claude-fleet-flow-card
-            entity: sensor.claude_output_token_rate
-            name: Output tokens a minute
-            grid_options: { columns: 16, rows: auto }
-            visibility:
-              - condition: state
-                entity: sensor.claude_plan_session_usage
-                state_not: unknown
-              - condition: state
-                entity: sensor.claude_plan_session_usage
-                state_not: unavailable
-              - condition: screen
-                media_query: "(min-width: 768px)"
           # The same stream at full width: on a phone, and on a wide screen when
           # there is no plan source, so no gauges to share the row with.
           - type: custom:claude-fleet-flow-card
@@ -460,6 +447,20 @@ views:
                   {%- endif %}
 
                   <details><summary>What do these mean?</summary><ul><li><b>Session</b> is the 5-hour limit, <b>Weekly</b> the 7-day one, both as your plan integration reports them.</li><li><b>Pace</b> compares % used with % of the window gone. Under pace means room to spare; over pace means using it faster than time passes.</li><li><b>Gauge colours, session</b>: where this rate lands by the reset. Yellow if it projects to 90% or more; red if it projects to 100% once more than 20% is used (earlier than that, one busy minute swings the projection, so it stays yellow).</li><li><b>Gauge colours, weekly</b>: yellow when 3–9 points over pace, <i>or</i> on pace but with less left than a heavy day would use before the reset (your busiest day of the last week, never under 1.5× an average day). Red at 10+ points over pace, or at 100%.</li><li><b>Used against % of the window</b> is your average so far. <b>Limit at</b> is different: it assumes you keep going at your <i>last 30 minutes'</i> rate, so a busy half hour can warn even while the average is under pace. Early in a window it is noisy, and the card says so.</li></ul></details>
+          # The stream ends the row on a wide screen (see the top of this block).
+          - type: custom:claude-fleet-flow-card
+            entity: sensor.claude_output_token_rate
+            name: Output tokens a minute
+            grid_options: { columns: 16, rows: auto }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_session_usage
+                state_not: unavailable
+              - condition: screen
+                media_query: "(min-width: 768px)"
 
           # The same three cards on a phone: see the comment at the top of this block.
           - type: grid
