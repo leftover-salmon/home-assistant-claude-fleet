@@ -1,5 +1,6 @@
 # The fleet on an AWTRIX NG pixel clock (e.g. Ulanzi TC001): a corner light in
-# the fleet's colour, and a notification naming a session when it needs you.
+# the fleet's colour, a notification naming a session when it needs you, and
+# screens in the rotation: plan usage, and the token rate as running water.
 #
 # OPTIONAL. Delete this file and the feature is gone. Nothing to configure: it
 # finds the clock by itself -- the first device Home Assistant knows with model
@@ -197,3 +198,53 @@ automation:
                 topic: "{{ prefix }}/cmd/apps/pushed/{{ repeat.item }}"
                 payload: >
                   {{ (screens[repeat.item] | to_json) if display_on and repeat.item in screens else '' }}
+
+  # --------------------------------------------------- the stream, in pixels
+  # The dashboard's river on the clock: the fleet's output tokens a minute as a
+  # number, over the firmware's own Pacifica ocean waves, running as fast as the
+  # fleet is writing. Speed uses the flow card's curve (a log scale raised to
+  # 2.2, so one session thinking aloud stays slow and only real bursts race).
+  # Its own automation, not one more screen above: the rate changes every
+  # minute, and in `mode: restart` beside the plan screens it would keep
+  # cutting their publishes short. Nothing written, or the display off: the
+  # screen is deleted, so a quiet fleet takes no turn in the rotation.
+  - id: claude_fleet_awtrix_flow
+    alias: "Claude · desk display stream"
+    mode: restart
+    triggers:
+      - trigger: state
+        entity_id:
+          - sensor.claude_output_token_rate
+          - input_boolean.claude_fleet_desk_display
+          - sensor.claude_fleet_awtrix_prefix
+      # a rate that holds still sends no state change; this keeps the screen
+      # inside its lifetime while it does
+      - trigger: time_pattern
+        minutes: "/2"
+      - trigger: homeassistant
+        event: start
+    variables:
+      prefix: "{{ states('sensor.claude_fleet_awtrix_prefix') }}"
+      display_on: "{{ is_state('input_boolean.claude_fleet_desk_display', 'on') }}"
+      rate: "{{ states('sensor.claude_output_token_rate') | float(0) }}"
+      # same scale as the flow card: 30,000 a minute reads as full
+      level: >
+        {{ 0 if rate <= 0 else
+           ([1, (log(1 + rate, 10) / log(30001, 10))] | min) ** 2.2 }}
+      screen: >
+        {%- if rate > 0 %}
+          {%- set r = rate | round(0) | int %}
+          {%- set text = (r ~ '') if r < 1000 else
+                         ((r / 1000) | round(1) ~ 'K') if r < 10000 else
+                         ((r / 1000) | round(0) | int ~ 'K') %}
+          {{ {'text': text, 'effect': 'Pacifica', 'palette': 'Ocean',
+              'effectSpeed': (0.1 + 2.9 * level) | round(2), 'lifetimeMs': 600000} | to_json }}
+        {%- endif %}
+    conditions:
+      - condition: template
+        value_template: "{{ prefix not in ['unknown', 'unavailable', 'none', ''] }}"
+    actions:
+      - action: mqtt.publish
+        data:
+          topic: "{{ prefix }}/cmd/apps/pushed/fleet_flow"
+          payload: "{{ screen if display_on and screen else '' }}"
