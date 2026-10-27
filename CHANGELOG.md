@@ -21,6 +21,45 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+## Hook 0.1.14 (2026-10-27)
+
+**To update:** with the plugin, `/plugin` → **Marketplaces** → claude-fleet → **Update**,
+then update the plugin; with the script, `git pull && ./install.sh`. Sessions already
+running keep the old hook until they are restarted. Pair it with [Home Assistant files
+0.5.0](#home-assistant-files-050-2026-10-27), which is what reads `/away` and `/back`.
+
+- **`/away` and `/back`.** Type either into any session and the hook tells Home Assistant,
+  published retained on `claude/presence`. The command never reaches the model, so it
+  costs no turn. The script install adds the two command files to `~/.claude/commands`; the
+  plugin carries them.
+- **Back without saying so:** after `/away`, any other prompt typed at that computer counts
+  as back. A prompt sent from your phone through Remote Control reaches the same session,
+  so on a Mac it counts only if the keyboard or mouse was used in the last two minutes
+  (`CLAUDE_HA_BACK_IDLE` in `ha-status.env`, in seconds).
+- **Your own `/away` or `/back` is left alone.** If a project or your own setup already has
+  a command or skill by either name, the plain name runs yours and Home Assistant isn't
+  told; `/claude-fleet:away` and `/claude-fleet:back` always reach Claude Fleet.
+- **Each session's Remote Control link,** `remote_url`, while Remote Control is on.
+
+## Home Assistant files 0.5.0 (2026-10-27)
+
+**To update:** copy `packages/claude_fleet.yaml` and `dashboards/claude_fleet.yaml` again,
+and restart. With the desk display, copy `packages/claude_fleet_awtrix.yaml` again too.
+Re-import the **"a session is waiting on you"** blueprint (its menu → **Re-import
+blueprint**). Update the hook on each computer as well ([Hook
+0.1.14](#hook-0114-2026-10-27)), or `/away` does nothing there.
+
+- **`binary_sensor.claude_away`,** from `/away` and `/back`, with who said it and where as
+  attributes. Nothing in Claude Fleet acts on it: it is there for your own automations.
+- **The stream leads the dashboard.** The burn-rate stream moves to the top, under the
+  headline. On a wide screen it shares one row with the two plan gauges and **At this
+  rate**; on a phone it stays full width. The **Last hour** chart now redraws with each new
+  reading and every minute, instead of only when the page loads.
+- **The stream on the desk display:** output tokens a minute over the clock's waves, faster
+  as the fleet writes faster, joining the rotation only while something is being written.
+- **Blueprint "a session is waiting on you":** tapping the notification opens the waiting
+  session in Remote Control when it has a link, instead of the dashboard.
+
 ## Home Assistant files 0.4.0 (2026-10-13)
 
 **To update:** copy `packages/claude_fleet.yaml` and `dashboards/claude_fleet.yaml` again,

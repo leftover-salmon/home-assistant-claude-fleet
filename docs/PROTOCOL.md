@@ -17,6 +17,7 @@ computer. A consumer that connects late gets the current state of every session 
 | `claude/<machine>/rtk/attrs` | JSON, [below](#rtk-attributes) | with the RTK state |
 | `claude/<machine>/tokens/state` | output tokens every session on this computer wrote today, as a number | whenever a session's tokens are counted: when a turn ends, and every `TOKENS_RECHECK` seconds (120) while one runs |
 | `claude/<machine>/tokens/attrs` | `{"claude_machine_tokens": true, "machine": "M4 Mac Mini", "day": "2026-10-13"}` | with the tokens state |
+| `claude/presence` | `{"state": "away"\|"back", "machine": "M4 Mac Mini", "at": "2026-10-21T18:40:00Z", "how": "command"\|"prompt"}` | retained; `/away` or `/back` typed into any session (`how: command`), or any other prompt typed at the computer that last said `/away`, with its keyboard or mouse used in the last 2 min (`how: prompt`). A bare `/away` or `/back` is left alone when the project or person has their own command or skill of that name; `/claude-fleet:away` always works. The person's presence, not a session's |
 | `homeassistant/sensor/claude_<machine>_<first 8 of session_id>/config` | Home Assistant MQTT discovery | once per session, again when its label changes, and after two hours of silence |
 | `homeassistant/sensor/claude_<machine>_rtk/config` | Home Assistant MQTT discovery | with every RTK publish |
 | `homeassistant/sensor/claude_machine_<machine>_output_tokens/config` | Home Assistant MQTT discovery; names the entity `sensor.claude_machine_<machine>_output_tokens` | with every tokens publish |
@@ -58,6 +59,7 @@ The JSON on `…/attrs`. Every field is always present; empty values are `""`, `
 | `machine` | string | The computer's readable name. |
 | `repo`, `branch` | string | Where the session is working: the repo of the last file it edited, else where it started. |
 | `cwd` | string | Where the session started. |
+| `remote_url` | string | The session's Remote Control link (`https://claude.ai/code/session_…`) while Remote Control is on, else `""`. Read from `CLAUDE_CODE_BRIDGE_SESSION_ID`, which Claude Code passes to hooks. |
 | `pr_number`, `pr_url`, `pr_title` | string | The open PR for the current branch, via `gh`. Empty on `main` or without `gh`. |
 | `prs_today` | array of `"#123"` | PRs this session opened today (local time). |
 | `prs_all` | array of `"#123"` | Every PR this session has touched. |

@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "claude-fleet",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Report every Claude Code session to Home Assistant over MQTT: live status, tokens, plan limits and RTK savings on a wall dashboard.",
   "author": {
     "name": "leftover-salmon"

@@ -71,6 +71,13 @@ variables:
   withdraw: !input withdraw
   tag: claude-fleet-waiting
   title: Claude is waiting on you
+  # Tapping opens the waiting session in Remote Control when it has a link (the
+  # hook publishes remote_url while Remote Control is on), else the dashboard.
+  open_url: >-
+    {{ states.sensor | selectattr('attributes.claude_session', 'defined')
+       | selectattr('state', 'eq', 'needs_input')
+       | map(attribute='attributes.remote_url') | select | first
+       | default('/claude-fleet/sessions', true) }}
   # "Fix flaky login test (laptop)", one per waiting session, oldest-named first
   message: >-
     {%- set w = states.sensor | selectattr('attributes.claude_session', 'defined')
@@ -124,7 +131,7 @@ actions:
                 data:
                   tag: "{{ tag }}"
                   group: claude-fleet
-                  url: /claude-fleet/sessions
-                  clickAction: /claude-fleet/sessions
+                  url: "{{ open_url }}"
+                  clickAction: "{{ open_url }}"
       - choose: []
         default: !input extra_actions

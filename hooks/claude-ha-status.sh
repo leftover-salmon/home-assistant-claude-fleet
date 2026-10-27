@@ -321,6 +321,15 @@ ended_already() {
   [ "$st" = ended ] && [ "${since:-0}" -ge "$RUN_START" ] 2>/dev/null
 }
 
+# The session's Remote Control link, so a "waiting on you" notification can open
+# it on a phone. Claude Code passes the bridge's session id to the processes it
+# starts, hooks included, only while Remote Control is on; otherwise "".
+remote_url() {
+  case "${CLAUDE_CODE_BRIDGE_SESSION_ID:-}" in
+    session_*) printf 'https://claude.ai/code/%s' "$CLAUDE_CODE_BRIDGE_SESSION_ID" ;;
+  esac
+}
+
 main() {
   local j="$INPUT"
   local ev sid cwd transcript tool msg ntype prompt
@@ -663,9 +672,10 @@ main() {
     --argjson stale "$STALE_MINUTES" --argjson rtk "$RTK_ON" \
     --arg via "$([ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && echo plugin || echo script)" \
     --arg hv "$(hook_version)" \
-    --arg cli "$cli_now" '{
+    --arg cli "$cli_now" --arg remote "$(remote_url)" '{
       claude_session: true, session_id: $sid, label, machine: $machine, repo, branch,
       cwd: $cwd, pr_number, pr_url, pr_title, last_prompt, last_event: $ev,
+      remote_url: $remote,
       state_since: (.state_since | todate), last_seen: $now_iso,
       prs_today, prs_all, wait_minutes_today: ((.wait_today / 60) | floor),
       prompts_today, day, stale_after_min: $stale,
@@ -752,10 +762,86 @@ The one SUMMARY: line:" </dev/null 2>/dev/null \
   return 0
 }
 
+# ---- /away and /back: the person, not the session ---------------------------
+# "I'm stepping away from the desk" and "I'm back", published retained on
+# claude/presence so Home Assistant needn't guess from silence. The prompt is
+# answered here and blocked: it reaches Home Assistant and costs no model turn.
+# Claude Code hands a slash command to this hook as <command-name>/away</command-name>
+# (or /claude-fleet:away from the plugin); a bare "/away" is accepted too. These
+# are fixed tokens we ask for, matched as substrings.
+# A bare /away or /back may be someone else's command of the same name, which
+# Claude Code reports to this hook identically. Taking it over would answer
+# their command and stop it running, so the bare name is ours only when no
+# other away/back command or skill is installed; /claude-fleet:away always is.
+presence_of() { # prompt -> away | back | ""
+  case "$1" in
+    *"<command-name>/claude-fleet:away</command-name>"*) echo away ;;
+    *"<command-name>/claude-fleet:back</command-name>"*) echo back ;;
+    /away|"/away "*|*"<command-name>/away</command-name>"*) only_fleet_has away && echo away ;;
+    /back|"/back "*|*"<command-name>/back</command-name>"*) only_fleet_has back && echo back ;;
+  esac
+}
+
+only_fleet_has() { # name -> 0 unless a command or skill of that name isn't ours
+  local name=$1 d f
+  d=$(jq -r '.cwd // empty' <<<"$INPUT" 2>/dev/null)
+  # project ones, from the session's folder up, then the person's own
+  while [ -n "$d" ]; do
+    set -- "$@" "$d/.claude/commands/$name.md" "$d/.claude/skills/$name/SKILL.md"
+    [ "$d" = / ] && break
+    d=$(dirname "$d")
+  done
+  d="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  set -- "$@" "$d/commands/$name.md" "$d/skills/$name/SKILL.md"
+  shift
+  for f in "$@"; do
+    [ -f "$f" ] && ! grep -q 'The Claude Fleet hook answers this command' "$f" && return 1
+  done
+  return 0
+}
+
+presence_publish() { # away|back how(command|prompt)
+  local machine payload
+  machine="${CLAUDE_HA_MACHINE:-$(scutil --get LocalHostName 2>/dev/null || hostname -s)}"
+  payload=$(jq -nc --arg s "$1" --arg m "$machine" --arg how "$2" \
+    --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{state: $s, machine: $m, at: $at, how: $how}')
+  mkdir -p "$STATE_DIR"
+  PUB_TRIES=2 pub "claude/presence" "$payload" || return 1
+  printf '%s\n' "$1" > "$STATE_DIR/presence"
+}
+
+typed_here() { # was this computer's keyboard or mouse just used?
+  local idle
+  idle=$(/usr/sbin/ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}')
+  [ -z "$idle" ] || [ "$idle" -lt "${CLAUDE_HA_BACK_IDLE:-120}" ]
+}
+
 # SessionEnd runs in the foreground: Claude Code is exiting, and a background
 # publish could be killed before it reaches HA (the session would never show "ended").
 # It's a single quick publish, bounded by the hook's 5 s timeout.
 EVENT=$(jq -r '.hook_event_name // empty' <<<"$INPUT" 2>/dev/null)
+if [ "$EVENT" = UserPromptSubmit ]; then
+  PRESENCE=$(presence_of "$(jq -r '.prompt // empty' <<<"$INPUT" 2>/dev/null)")
+  if [ -n "$PRESENCE" ]; then
+    if presence_publish "$PRESENCE" command; then
+      REASON=$([ "$PRESENCE" = away ] && echo "Home Assistant knows you're away." \
+                                      || echo "Home Assistant knows you're back.")
+    else
+      REASON="Couldn't reach Home Assistant, so it wasn't told. scripts/diagnose.sh shows why."
+    fi
+    jq -nc --arg r "$REASON" '{decision: "block", reason: $r}'
+    exit 0
+  fi
+  # Any other prompt on the computer that said /away means the person is back,
+  # if it was typed AT that computer. A prompt sent from the phone (Remote
+  # Control) lands here too, so it counts only when the keyboard or mouse was
+  # touched in the last CLAUDE_HA_BACK_IDLE seconds. No idle reading (not a
+  # Mac): any prompt, as before.
+  if [ "$(cat "$STATE_DIR/presence" 2>/dev/null)" = away ] && typed_here; then
+    ( presence_publish back prompt ) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null
+  fi
+fi
 if [ "${CLAUDE_HA_SYNC:-0}" = 1 ]; then
   main
 elif [ "$EVENT" = SessionEnd ]; then

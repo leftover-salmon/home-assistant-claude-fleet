@@ -13,9 +13,9 @@ on:
         default: pinned
   push:
     branches: [main]
-    paths: ["homeassistant/**", "blueprints/**", "hooks/**", "install.sh", "scripts/**", "tests/e2e/**", ".github/workflows/e2e.yml"]
+    paths: ["homeassistant/**", "blueprints/**", "hooks/**", "install.sh", "scripts/**", "tests/**", ".github/workflows/e2e.yml"]
   pull_request:
-    paths: ["homeassistant/**", "blueprints/**", "hooks/**", "install.sh", "scripts/**", "tests/e2e/**", ".github/workflows/e2e.yml"]
+    paths: ["homeassistant/**", "blueprints/**", "hooks/**", "install.sh", "scripts/**", "tests/**", ".github/workflows/e2e.yml"]
   # weekly, against HA stable and beta: a new release breaking the templates
   # should show up here before it shows up for users
   schedule:
@@ -51,6 +51,9 @@ jobs:
           echo "CF_DEMO_DIR=$RUNNER_TEMP/cf-e2e" >> "$GITHUB_ENV"
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends mosquitto-clients jq sqlite3
+
+      - name: /away and /back leave look-alike commands alone
+        run: tests/presence_test.sh
 
       - name: Self-test (every check must be able to fail)
         run: tests/e2e/run.sh selftest

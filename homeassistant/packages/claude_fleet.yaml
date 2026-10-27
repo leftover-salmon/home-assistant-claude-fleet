@@ -205,7 +205,7 @@ template:
       - name: Claude Fleet package version
         unique_id: claude_fleet_package_version
         icon: mdi:tag-outline
-        state: "0.4.0"
+        state: "0.5.0"
 
   # ---- derived from the four above --------------------------------------------
   - sensor:
@@ -1141,6 +1141,22 @@ template:
             {{ ns.hit if ns.hit is not none else (old if old is mapping else none) }}
 
 # ---- "today" KPIs -----------------------------------------------------------
+# /away and /back, typed into any Claude Code session: the person, not a session.
+# The hook publishes them retained on claude/presence; any other prompt on the
+# computer that said /away clears it (typed there, not sent from a phone).
+# Nothing here acts on it: an automation of yours can (send waiting sessions to
+# a phone at once, summarise on return).
+mqtt:
+  - binary_sensor:
+      name: Claude away
+      unique_id: claude_fleet_away
+      icon: mdi:account-arrow-right
+      state_topic: claude/presence
+      value_template: "{{ value_json.state }}"
+      payload_on: away
+      payload_off: back
+      json_attributes_topic: claude/presence
+
 sensor:
   # hours today with at least one session waiting on you
   - platform: history_stats

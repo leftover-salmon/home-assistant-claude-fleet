@@ -84,6 +84,17 @@ cp "$REPO/hooks/claude-ha-status.sh" "$DEST"; chmod +x "$DEST"
 # the version the dashboard shows, from the one place it is kept
 jq -r '.version' "$REPO/.claude-plugin/plugin.json" > "$CLAUDE_DIR/hooks/claude-ha-status.version" 2>/dev/null
 ok "installed $DEST"
+# /away and /back. The hook answers them; the files only make Claude Code accept
+# the names. An existing file of the same name that is not ours is left alone.
+mkdir -p "$CLAUDE_DIR/commands"
+for c in away back; do
+  CDEST="$CLAUDE_DIR/commands/$c.md"
+  if [ -f "$CDEST" ] && ! grep -q 'Claude Fleet' "$CDEST"; then
+    warn "$CDEST is someone else's; /$c left as it is"
+  else
+    cp "$REPO/commands/$c.md" "$CDEST"; ok "installed /$c"
+  fi
+done
 
 say ""
 say "== 3. env file =="
