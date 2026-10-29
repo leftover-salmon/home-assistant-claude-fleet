@@ -32,12 +32,21 @@
  * met. With no such sensors, or on a card too narrow to fit them, there is
  * only the river.
  *
+ * A page that was asleep (a background tab, a closed laptop) heard nothing
+ * while it slept, so its last reading is from before it went to sleep, and
+ * everything written in between would land in the five minutes after it woke:
+ * a stream in flood that was a trickle all along. So a page that has heard
+ * nothing from Home Assistant for ASLEEP_S forgets its readings and asks the
+ * recorder again, as a fresh page does. A live page hears something every few
+ * seconds, and asking again costs nothing but one recorder query.
+ *
  * No dependencies and nothing fetched: one file, drawn on a canvas. It stops
  * drawing when the card is off screen or the tab is hidden, and draws a still
  * picture for anyone who has asked their system for reduced motion.
  */
-const FLOW_VERSION = "2";
+const FLOW_VERSION = "3";
 const WINDOW_S = 330;         // a computer's rate is read over this long
+const ASLEEP_S = 90;          // no word from Home Assistant this long: the page was asleep
 const MIN_TRIB_WIDTH = 360;   // narrower than this, the river alone
 const CURVE = 2.2;
 
@@ -108,10 +117,18 @@ class ClaudeFleetFlowCard extends HTMLElement {
     return Math.max(0, Math.round((last[1] - first[1]) / minutes));
   }
 
+  /* Whether a page last told anything by Home Assistant at `heardAt` was
+   * asleep until `now`. A page that has never heard anything was not. */
+  static slept(heardAt, now) {
+    return heardAt !== undefined && now - heardAt > ASLEEP_S;
+  }
+
   /* Note each computer's counter, and ask the recorder once for the minutes
    * before this page was opened. */
   _readMachines(hass) {
     const now = Date.now() / 1000;
+    if (ClaudeFleetFlowCard.slept(this._heardAt, now)) this._machines.clear();
+    this._heardAt = now;
     const ids = [];
     for (const id in hass.states) {
       const st = hass.states[id];

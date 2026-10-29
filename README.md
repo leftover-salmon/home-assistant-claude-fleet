@@ -121,7 +121,7 @@ lovelace:
       filename: dashboards/claude_fleet.yaml
 frontend:
   extra_module_url:
-    - /local/claude-fleet-flow-card.js?v=2
+    - /local/claude-fleet-flow-card.js?v=3
 ```
 
 Both files are called `claude_fleet.yaml`, so mind which is which:

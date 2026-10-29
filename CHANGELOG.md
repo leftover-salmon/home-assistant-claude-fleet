@@ -21,6 +21,25 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+## Home Assistant files 0.5.1 (2026-10-28)
+
+**To update:** copy `www/claude-fleet-flow-card.js` to `/config/www/` again, change the
+line under `frontend:` in `configuration.yaml` to
+
+```yaml
+    - /local/claude-fleet-flow-card.js?v=3
+```
+
+and restart. Copy `packages/claude_fleet.yaml` and `dashboards/claude_fleet.yaml` again
+too: only their version number changed, and the Setup tab warns while they disagree.
+
+- **A dashboard left open no longer floods.** A page that had been asleep (a background
+  tab, a closed laptop) counted everything a computer wrote while it slept as the last five
+  minutes, so on waking a computer writing a few hundred tokens a minute showed tens of
+  thousands, and the stream and the big number went into flood with it. A page that has
+  heard nothing from Home Assistant for a minute and a half now forgets its readings and
+  asks the recorder for the last five minutes again, as a freshly opened page does.
+
 ## Hook 0.1.14 (2026-10-27)
 
 **To update:** with the plugin, `/plugin` → **Marketplaces** → claude-fleet → **Update**,

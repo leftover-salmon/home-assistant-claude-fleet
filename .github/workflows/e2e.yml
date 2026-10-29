@@ -55,6 +55,9 @@ jobs:
       - name: /away and /back leave look-alike commands alone
         run: tests/presence_test.sh
 
+      - name: The flow card wakes up without a flood
+        run: tests/flow_card_test.sh
+
       - name: Self-test (every check must be able to fail)
         run: tests/e2e/run.sh selftest
 
