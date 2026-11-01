@@ -592,6 +592,23 @@ views:
               | {{ d }} | **{{ a.label }}** | {{ a.machine }} | {{ m }} | {{ ctxcell }} | {{ tokcell }} |{{ (' ' ~ rtkcell ~ ' |') if rk.any }} {{ cli }} | {{ hookcell }} | {{ ask }} | {{ mins // 60 ~ 'h ' if mins >= 60 else '' }}{{ mins % 60 }}m |
               {%- endfor %}
               {%- endfor %}
+              {#- Headless calls (claude -p, the Agent SDK) are not sessions: the hook
+                  counts them per machine and they fold into one row here, shown while
+                  one is running or for two hours after the last. Each used to be a
+                  row of its own, and a script's batch of them filled the table. -#}
+              {%- for h in states.sensor | selectattr('attributes.claude_headless', 'defined') | sort(attribute='attributes.machine') %}
+              {%- set a = h.attributes %}
+              {%- set seen = as_timestamp(now()) - as_timestamp(a.get('last_seen'), 0) %}
+              {%- set run = h.state | int(0) %}
+              {%- if a.get('day') == now().strftime('%Y-%m-%d') and (run > 0 or seen < 7200) %}
+              {%- set mins = (seen / 60) | int %}
+              {%- set calls = a.get('calls_today', 0) | int(0) %}
+              {%- set where = a.get('last_folder', '') %}
+              {%- set hd = '**headless · ' ~ calls ~ ' call' ~ ('s' if calls != 1 else '') ~ ((' · ' ~ run ~ ' running') if run > 0 else '') ~ '**' %}
+              {%- set ask = ((('in ' ~ where ~ ': ') if where else '') ~ (a.get('last_prompt') or '—')) | replace('|', '/') | truncate(70) %}
+              | {{ '🔵' if run > 0 else '⚪' }} | {{ hd }} | {{ a.machine }} | — | — | — |{{ ' — |' if rk.any }} — | {{ a.get('hook_version') or '—' }} | {{ ask }} | {{ mins // 60 ~ 'h ' if mins >= 60 else '' }}{{ mins % 60 }}m |
+              {%- endif %}
+              {%- endfor %}
 
               {#- The blank line below is load-bearing: without it markdown keeps
                   reading table rows and this renders as another column in a final
@@ -614,7 +631,7 @@ views:
               {%- endif %}
               {%- endif %}
 
-              <details><summary>What do these mean?</summary><ul><li>🔵 working · 🟠 needs you (a permission prompt or a question) · 🟢 idle, your move · ⚪ ended · 🔴 <b>stale</b>: marked working but silent past its Mac's stale limit, so probably stuck or asleep.</li><li><b>Context %</b>: how full the session's context window is, from its last request. ⚠️ from 85%. It assumes a 200k window until the session proves it has 1M by going past 200k.</li><li><b>🗜️</b>: the session compacted on its own today, having hit its context limit. <b>⚠️ 🗜️2</b> or more: it keeps outgrowing its window and is worth restarting. Your own <code>/compact</code> is not counted.</li><li><b>Tokens · cache</b>: tokens the session used today, subagents included, then the share of them read from the prompt cache.</li><li><b>RTK</b>: ✂️ RTK is filtering that Mac's commands; <i>off</i>: RTK is installed but its Claude Code hook is not.</li><li><b>CLI</b>: the Claude Code version the session started on. <b>Hook</b>: the fleet hook's version. ⚠️ on either means older than the newest seen. A Claude Code update, or a plugin update of the hook, only reaches a session when it restarts; a hook installed with <code>install.sh</code> updates on its next event.</li></ul></details>
+              <details><summary>What do these mean?</summary><ul><li>🔵 working · 🟠 needs you (a permission prompt or a question) · 🟢 idle, your move · ⚪ ended · 🔴 <b>stale</b>: marked working but silent past its Mac's stale limit, so probably stuck or asleep.</li><li><b>headless</b>: one-shot calls on that Mac (<code>claude -p</code>, the Agent SDK), which are not sessions. One row per Mac counts today's calls, 🔵 while any is running, with the last one's folder and prompt; it goes after two quiet hours. They are left out of every session count.</li><li><b>Context %</b>: how full the session's context window is, from its last request. ⚠️ from 85%. It assumes a 200k window until the session proves it has 1M by going past 200k.</li><li><b>🗜️</b>: the session compacted on its own today, having hit its context limit. <b>⚠️ 🗜️2</b> or more: it keeps outgrowing its window and is worth restarting. Your own <code>/compact</code> is not counted.</li><li><b>Tokens · cache</b>: tokens the session used today, subagents included, then the share of them read from the prompt cache.</li><li><b>RTK</b>: ✂️ RTK is filtering that Mac's commands; <i>off</i>: RTK is installed but its Claude Code hook is not.</li><li><b>CLI</b>: the Claude Code version the session started on. <b>Hook</b>: the fleet hook's version. ⚠️ on either means older than the newest seen. A Claude Code update, or a plugin update of the hook, only reaches a session when it restarts; a hook installed with <code>install.sh</code> updates on its next event.</li></ul></details>
 
           # The sessions on a phone: four columns instead of ten, since a phone shows
           # about four before the table runs off the edge. What each session is doing
@@ -644,6 +661,20 @@ views:
               {%- set ask = (a.get('summary') or a.get('last_prompt') or '') | replace('|', '/') | truncate(60) %}
               | {{ d }} | **{{ a.label }}**{{ ('<br>_' ~ ask ~ '_') if ask }} | {{ a.machine }} | {{ mins // 60 ~ 'h ' if mins >= 60 else '' }}{{ mins % 60 }}m |
               {%- endfor %}
+              {%- endfor %}
+              {#- headless calls, folded as in the full table -#}
+              {%- for h in states.sensor | selectattr('attributes.claude_headless', 'defined') | sort(attribute='attributes.machine') %}
+              {%- set a = h.attributes %}
+              {%- set seen = as_timestamp(now()) - as_timestamp(a.get('last_seen'), 0) %}
+              {%- set run = h.state | int(0) %}
+              {%- if a.get('day') == now().strftime('%Y-%m-%d') and (run > 0 or seen < 7200) %}
+              {%- set mins = (seen / 60) | int %}
+              {%- set calls = a.get('calls_today', 0) | int(0) %}
+              {%- set where = a.get('last_folder', '') %}
+              {%- set hd = '**headless · ' ~ calls ~ ' call' ~ ('s' if calls != 1 else '') ~ ((' · ' ~ run ~ ' running') if run > 0 else '') ~ '**' %}
+              {%- set ask = ((('in ' ~ where ~ ': ') if where else '') ~ (a.get('last_prompt') or '')) | replace('|', '/') | truncate(60) %}
+              | {{ '🔵' if run > 0 else '⚪' }} | {{ hd }}{{ ('<br>_' ~ ask ~ '_') if ask }} | {{ a.machine }} | {{ mins // 60 ~ 'h ' if mins >= 60 else '' }}{{ mins % 60 }}m |
+              {%- endif %}
               {%- endfor %}
               {%- endif %}
 

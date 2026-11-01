@@ -284,6 +284,107 @@ hook_version() {
   fi
 }
 
+# A prompt as the board shows it: pasted blocks redacted rather than published,
+# and the wrappers Claude Code writes itself turned into a few words. Whatever gets
+# pasted into a prompt -- an email, an appointment, a log with a key in it --
+# would otherwise go to MQTT, into HA's recorder database and onto whatever wall
+# display shows the dashboard. The wrapper also rendered literally in the table,
+# which is how this was noticed. Done in jq because it is already a dependency and
+# its regex engine has lazy quantifiers; sed would swallow everything between the
+# FIRST open tag and the LAST close tag when a prompt carries two blocks.
+# NOTE: this only covers the last-prompt line. The LLM summary reads the
+# transcript itself, so SUMMARY_ENABLED=0 is still the switch for that.
+clean_prompt() { # prompt
+  jq -rn --arg p "$1" '
+      $p
+      | gsub("(?s)<pasted_content[^>]*>.*?</pasted_content[^>]*>"; "[pasted]")
+      | sub("(?s)<pasted_content[^>]*>.*"; "[pasted]")
+      | gsub("(?s)</?pasted_content[^>]*>"; "")
+      # prompts Claude Code writes itself, which would otherwise show raw:
+      # a message from another Claude session, a background task finishing,
+      # a slash command
+      | sub("(?s)^\\s*<cross-session-message[^>]*from-name=\"(?<n>[^\"]*)\".*"; "[message from \(.n)]")
+      | sub("(?s)^\\s*<cross-session-message.*"; "[message from another session]")
+      | sub("(?s)^\\s*<task-notification.*"; "[background task finished]")
+      | sub("(?s)^\\s*<command-name>(?<c>[^<]*)</command-name>.*"; "\(.c)")
+      | gsub("[\n\t]"; " ") | gsub(" +"; " ")
+      | sub("^ +"; "") | sub(" +$"; "")
+      | .[0:200]'
+}
+
+# ---- headless calls, one sensor per machine ------------------------------------
+# `claude -p` and the Agent SDK fire the same hooks as a session someone types
+# into, and each one used to become a session row of its own. A script making a
+# batch of one-shot calls put ten rows on the board, each over in under a
+# minute, with no model, context or tokens to show (run with
+# --no-session-persistence they keep no transcript), looking for all the world
+# like a crash. Claude Code says which is which: CLAUDE_CODE_ENTRYPOINT is "cli"
+# in a terminal and "sdk-cli" (sdk-ts, sdk-py from the SDKs) for these. So they
+# are counted here instead and the board folds them into one row per machine.
+# They are not sessions anywhere else either: not in the running count, the
+# status light, the records or the day's tally.
+HEADLESS_RUNNING_MAX="${HEADLESS_RUNNING_MAX:-1800}"  # secs before an unended call stops counting as running
+is_headless() { case "${CLAUDE_CODE_ENTRYPOINT:-}" in sdk*) return 0 ;; esac; return 1; }
+
+headless_publish() { # event session_id cwd prompt
+  local ev=$1 sid=$2 cwd=$3 prompt=$4
+  # one call is a handful of events; only these four change what is shown
+  case "$ev" in SessionStart|UserPromptSubmit|Stop|SessionEnd) ;; *) return 0 ;; esac
+  local machine mslug now today folder p="" prev st i
+  machine="${CLAUDE_HA_MACHINE:-$(scutil --get LocalHostName 2>/dev/null || hostname -s)}"
+  mslug=$(slug <<<"$machine")
+  now=$(date +%s); today=$(date +%F)
+  folder=$(basename "$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || echo "$cwd")")
+  [ -n "$prompt" ] && p=$(clean_prompt "$prompt")
+  mkdir -p "$STATE_DIR"
+  # Every call on the machine writes the same file, and a batch runs them side
+  # by side, so it is locked. Not *.json: machine_tokens_publish reads those.
+  local hf="$STATE_DIR/headless.dat"
+  LOCK="$STATE_DIR/headless.lock"
+  [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rmdir "$LOCK" 2>/dev/null
+  for i in $(seq 1 30); do mkdir "$LOCK" 2>/dev/null && break; sleep 0.1; done
+  trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+  prev=$(cat "$hf" 2>/dev/null); [ -z "$prev" ] && prev='{}'
+  # "running" is a set of call ids with their start: a call killed before its
+  # SessionEnd would otherwise count as running for ever, so one older than
+  # HEADLESS_RUNNING_MAX drops out. A count would have no way to know which.
+  st=$(jq -c --arg ev "$ev" --arg sid "$sid" --argjson now "$now" --arg today "$today" \
+        --arg p "$p" --arg folder "$folder" --argjson max "$HEADLESS_RUNNING_MAX" '
+    (if .day != $today then {day: $today, calls_today: 0, folders: {}, running: (.running // {}),
+                             disc_at: (.disc_at // 0)} else . end)
+    | .running = ((.running // {}) | with_entries(select(.value > ($now - $max))))
+    | if $ev == "SessionStart" then
+        .calls_today = ((.calls_today // 0) + 1) | .running[$sid] = $now
+        | .folders[$folder] = ((.folders[$folder] // 0) + 1) | .last_folder = $folder
+      elif $ev == "UserPromptSubmit" then .running[$sid] = (.running[$sid] // $now)
+      else .running |= del(.[$sid]) end
+    | if $p != "" then .last_prompt = $p | .last_folder = $folder else . end
+    # a day of folders is a handful; ten is plenty to show and keeps it bounded
+    | .folders = (.folders // {} | to_entries | sort_by(-.value) | .[0:10] | from_entries)
+    | .last_seen = $now' <<<"$prev") || return 0
+
+  local uid="claude_${mslug}_headless" base="claude/${mslug}/headless" cfg attrs
+  if [ $((now - $(jq -r '.disc_at // 0' <<<"$st"))) -gt "$DISCOVERY_REFRESH" ]; then
+    cfg=$(jq -nc --arg uid "$uid" --arg base "$base" --arg dev "claude_code_${mslug}" --arg machine "$machine" '{
+        name: "headless calls running", unique_id: $uid,
+        default_entity_id: ("sensor." + $uid), icon: "mdi:console",
+        state_topic: ($base + "/state"), json_attributes_topic: ($base + "/attrs"),
+        unit_of_measurement: "calls", state_class: "measurement",
+        device: { identifiers: [$dev], name: ("Claude Code · " + $machine),
+                  manufacturer: "Claude Fleet", model: "Claude Code sessions" } }')
+    pub "${DISCOVERY_PREFIX}/sensor/${uid}/config" "$cfg" && st=$(jq -c --argjson t "$now" '.disc_at = $t' <<<"$st")
+  fi
+  printf '%s\n' "$st" > "$hf.tmp" && mv "$hf.tmp" "$hf"
+  attrs=$(jq -c --arg machine "$machine" --arg hv "$(hook_version)" '{
+      claude_headless: true, machine: $machine, day,
+      calls_today: (.calls_today // 0), running: (.running | length),
+      folders: (.folders | to_entries | map("\(.key) ×\(.value)")),
+      last_folder: (.last_folder // ""), last_prompt: (.last_prompt // ""),
+      last_seen: (.last_seen | todate), hook_version: $hv }' <<<"$st")
+  pub "$base/attrs" "$attrs"
+  pub "$base/state" "$(jq -r '.running' <<<"$attrs")"
+}
+
 # ---- SessionEnd: the fast path ------------------------------------------------
 # Claude Code gives a hook at exit very little time, and cancels it when it runs
 # over. The full routine (transcript scan, a gh lookup, RTK's ledger) took 1.3s
@@ -343,6 +444,9 @@ main() {
   prompt=$(jq -r '.prompt // empty' <<<"$j")
   [ -z "$sid" ] && return
   [ -z "$cwd" ] && cwd="$PWD"
+  if is_headless; then
+    mkdir -p "$STATE_DIR"; headless_publish "$ev" "$sid" "$cwd" "$prompt"; return
+  fi
 
   # ---- map hook event -> state ------------------------------------------
   local new
@@ -542,30 +646,8 @@ main() {
   local last_prompt
   last_prompt=$(g last_prompt)
   if [ -n "$prompt" ]; then
-    # Redact pasted blocks rather than publishing them. Whatever gets pasted into a
-    # prompt -- an email, an appointment, a log with a key in it -- would otherwise go
-    # to MQTT, into HA's recorder database and onto whatever wall display shows the
-    # dashboard. The wrapper also rendered literally in the table, which is how this
-    # was noticed. Done in jq because it is already a dependency and its regex engine
-    # has lazy quantifiers; sed would swallow everything between the FIRST open tag
-    # and the LAST close tag when a prompt carries two blocks.
-    # NOTE: this only covers the last-prompt line. The LLM summary reads the
-    # transcript itself, so SUMMARY_ENABLED=0 is still the switch for that.
-    last_prompt=$(jq -rn --arg p "$prompt" '
-      $p
-      | gsub("(?s)<pasted_content[^>]*>.*?</pasted_content[^>]*>"; "[pasted]")
-      | sub("(?s)<pasted_content[^>]*>.*"; "[pasted]")
-      | gsub("(?s)</?pasted_content[^>]*>"; "")
-      # prompts Claude Code writes itself, which would otherwise show raw:
-      # a message from another Claude session, a background task finishing,
-      # a slash command
-      | sub("(?s)^\\s*<cross-session-message[^>]*from-name=\"(?<n>[^\"]*)\".*"; "[message from \(.n)]")
-      | sub("(?s)^\\s*<cross-session-message.*"; "[message from another session]")
-      | sub("(?s)^\\s*<task-notification.*"; "[background task finished]")
-      | sub("(?s)^\\s*<command-name>(?<c>[^<]*)</command-name>.*"; "\(.c)")
-      | gsub("[\n\t]"; " ") | gsub(" +"; " ")
-      | sub("^ +"; "") | sub(" +$"; "")
-      | .[0:200]')
+    # redacted, never published as typed: see clean_prompt
+    last_prompt=$(clean_prompt "$prompt")
   fi
 
   # Is RTK rewriting this machine's commands? RTK is optional: null = not

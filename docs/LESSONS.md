@@ -216,6 +216,15 @@ They are here so they cost it once, and most of them apply well beyond this proj
 - **The summariser runs after the publish and outside the lock.** The call takes ~13s; status
   publishing and the next hook event must never wait on it.
 - **`</dev/null` on `claude -p`**, or it waits 3s for stdin and warns into the captured output.
+- **Every headless call is a session to the hooks.** A script that ran a batch of one-shot
+  `claude -p` calls put a dozen rows on the board, each over in under a minute with no model or
+  tokens to show, and it read as everything having crashed. Nothing marks such a call in the hook
+  input; the environment does: `CLAUDE_CODE_ENTRYPOINT` is `cli` in a terminal and `sdk-cli`
+  (`sdk-ts`, `sdk-py`) for these. They are now counted on one sensor per computer and folded into
+  one row, and they stay out of every session count. "Running" is a set of call ids with their
+  start times, not a counter, because a call killed before its `SessionEnd` would otherwise run for
+  ever. The demo sets the variable on every event, since a scenario started from inside a Claude
+  session would otherwise inherit that session's value.
 
 ## Installing and updating
 

@@ -322,6 +322,34 @@ def check_today_card(rendered, exp):
     return out
 
 
+def check_headless(states, rendered, exp):
+    """Headless calls are counted on one sensor per computer, never as sessions
+    (check_sessions holds the session side), and both sessions tables fold them
+    into one row."""
+    out = []
+    hs = [s for s in states if s["attributes"].get("claude_headless")]
+    if len(hs) != 1:
+        return ["%d headless sensors, expected 1 (for %s)" % (len(hs), exp["machine"])]
+    h = hs[0]
+    a = h["attributes"]
+    if a.get("machine") != exp["machine"]:
+        out.append("headless sensor is for %r, expected %r" % (a.get("machine"), exp["machine"]))
+    if h["state"] != str(exp["running"]) or a.get("running") != exp["running"]:
+        out.append("headless running: state %s, attribute %s, expected %d" % (h["state"], a.get("running"), exp["running"]))
+    if a.get("calls_today") != exp["calls"]:
+        out.append("headless calls_today %s, expected %d" % (a.get("calls_today"), exp["calls"]))
+    if a.get("last_prompt") != exp["prompt"]:
+        out.append("headless last_prompt %r, expected %r" % (a.get("last_prompt"), exp["prompt"]))
+    row = "headless · %d calls · %d running" % (exp["calls"], exp["running"])
+    tables = [r for r in rendered if r["title"] == "Sessions" and r.get("result") is not None]
+    if len(tables) != 2:
+        out.append("%d rendered Sessions tables, expected 2 (full and phone)" % len(tables))
+    for r in tables:
+        if r["result"].count(row) != 1:
+            out.append("Sessions table (%s): %d rows reading %r, expected 1" % (r["path"], r["result"].count(row), row))
+    return out
+
+
 # ================================================================ plan usage
 def check_plan(states):
     by_id = {s["entity_id"]: s["state"] for s in states}
@@ -922,6 +950,23 @@ def self_test():
     expect("today card: an unrecognisable line fails", check_today_card([dict(good[0], result="nothing")], exp), True)
     expect("today card: no card fails", check_today_card([], exp), True)
 
+    # ---- headless calls
+    hx = {"machine": "mini", "calls": 3, "running": 1, "prompt": "THE IDEA: x"}
+    hsens = {"entity_id": "sensor.claude_mini_headless", "state": "1", "attributes": {
+        "claude_headless": True, "machine": "mini", "calls_today": 3, "running": 1, "last_prompt": "THE IDEA: x"}}
+    hrow = "| 🔵 | **headless · 3 calls · 1 running** | mini |"
+    htabs = [{"path": "sessions", "title": "Sessions", "result": "| | Session |\n" + hrow},
+             {"path": "sessions", "title": "Sessions", "result": hrow + "<br>_in x_"}]
+    expect("headless: one sensor and a row per table passes", check_headless([hsens], htabs, hx), False)
+    expect("headless: no sensor fails", check_headless([], htabs, hx), True)
+    expect("headless: wrong call count fails",
+           check_headless([dict(hsens, attributes=dict(hsens["attributes"], calls_today=2))], htabs, hx), True)
+    expect("headless: wrong running count fails", check_headless([dict(hsens, state="0")], htabs, hx), True)
+    expect("headless: phone table without the row fails",
+           check_headless([hsens], [htabs[0], dict(htabs[1], result="nothing")], hx), True)
+    expect("headless: a row per call (unfolded) fails",
+           check_headless([hsens], [dict(htabs[0], result=hrow + hrow), htabs[1]], hx), True)
+
     # ---- render: the classification of HA's replies, and the card walk
     card = {"path": "/p", "title": "T", "content": BROKEN_TEMPLATE}
     ok_reply = ({"id": 1, "type": "result", "success": True}, {"result": "fine", "listeners": {}})
@@ -1035,6 +1080,7 @@ def live():
     record("markdown cards render strictly (%d cards, 3 views, phone-only included)" % len(cards),
            check_render(rendered, min_cards=10))
     record("Today card's sums", check_today_card(rendered, exp))
+    record("headless calls: one sensor, one folded row per table", check_headless(states(), rendered, gen.HEADLESS))
 
     # ---- the flow card: the dashboard asks for it by name, so Home Assistant must
     # serve the file, and the frontend must have been told to load it

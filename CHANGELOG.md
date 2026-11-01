@@ -21,6 +21,15 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+- **Headless calls fold into one row.** One-shot `claude -p` and Agent SDK calls used to appear
+  as a session each, so a script running a batch filled the Sessions table with rows that were
+  over in under a minute. The hook now counts them on one sensor per computer
+  (`sensor.claude_<machine>_headless`: calls today, how many are running, the last one's folder
+  and prompt), and both Sessions tables show one row per computer while a call is running or for
+  two hours after the last. They are not counted as sessions anywhere: not in Running, the status
+  light, the records or the day's tally. Needs the hook and the dashboard together: with only the
+  new hook, headless calls disappear from the table instead of folding into it.
+
 ## Home Assistant files 0.5.1 (2026-10-28)
 
 **To update:** copy `www/claude-fleet-flow-card.js` to `/config/www/` again, change the

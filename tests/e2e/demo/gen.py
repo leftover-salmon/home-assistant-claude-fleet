@@ -925,8 +925,19 @@ def cmd_plan():
 
 
 # =============================================================== sessions
-def ev(p, event, extra=None):
-    env = dict(os.environ, FAKE_HOME=p["home"], CLAUDE_HA_SYNC="1")
+# Headless calls (claude -p, the Agent SDK) on one computer: two finished, one
+# still running. They are not sessions: the hook counts them on one sensor per
+# computer, and the sessions table folds them into one row. check.py holds the
+# scenario to that, and to every session count being unchanged by them.
+HEADLESS = {"machine": "mini", "calls": 3, "running": 1,
+            "prompt": "THE IDEA: rename the retry helper and check its callers"}
+
+
+def ev(p, event, extra=None, entrypoint="cli"):
+    # Claude Code says how it was started in CLAUDE_CODE_ENTRYPOINT, and the hook
+    # treats sdk-* as headless. Always set: a scenario run from inside a Claude
+    # session would otherwise hand every event that session's own value.
+    env = dict(os.environ, FAKE_HOME=p["home"], CLAUDE_HA_SYNC="1", CLAUDE_CODE_ENTRYPOINT=entrypoint)
     cmd = [os.path.join(HERE, "..", "ev.sh"), event, p["sid"], p["cwd"], p["transcript"],
            json.dumps(extra or {})]
     subprocess.run(cmd, env=env, check=True, cwd=p["cwd"])
@@ -980,6 +991,22 @@ def cmd_run():
     if stale_done:
         with open(os.path.join(OUT, "stale_since"), "w") as f:
             f.write(str(int(stale_done)))
+    if not only_ended:
+        run_headless(plan)
+
+
+def run_headless(plan):
+    m = HEADLESS["machine"]
+    base = next(p for p in plan if p["machine"] == m)
+    for i in range(HEADLESS["calls"]):
+        p = dict(base, sid="headless-%d" % i, transcript="")
+        ev(p, "SessionStart", {"source": "startup"}, entrypoint="sdk-cli")
+        ev(p, "UserPromptSubmit", {"prompt": HEADLESS["prompt"]}, entrypoint="sdk-cli")
+        if i >= HEADLESS["calls"] - HEADLESS["running"]:
+            continue                                    # still running
+        ev(p, "Stop", {"stop_hook_active": False}, entrypoint="sdk-cli")
+        ev(p, "SessionEnd", {"reason": "other"}, entrypoint="sdk-cli")
+    print("  ok    %-8s %d headless calls, %d still running" % (m, HEADLESS["calls"], HEADLESS["running"]))
 
 
 def cmd_check():
