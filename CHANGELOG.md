@@ -21,19 +21,34 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+## Hook 0.1.15 (2026-11-03)
+
+**To update:** with the plugin, `/plugin` → **Marketplaces** → claude-fleet → **Update**,
+then update the plugin; with the script, `git pull && ./install.sh`. Sessions already
+running keep the old hook until they are restarted. Update the dashboard at the same time
+([Home Assistant files 0.6.0](#home-assistant-files-060-2026-11-03)): with only the new hook,
+headless calls disappear from the Sessions table instead of folding into one row.
+
 - **Headless calls fold into one row.** One-shot `claude -p` and Agent SDK calls used to appear
   as a session each, so a script running a batch filled the Sessions table with rows that were
   over in under a minute. The hook now counts them on one sensor per computer
   (`sensor.claude_<machine>_headless`: calls today, how many are running, the last one's folder
-  and prompt), and both Sessions tables show one row per computer while a call is running or for
-  two hours after the last. They are not counted as sessions anywhere: not in Running, the status
-  light, the records or the day's tally. Needs the hook and the dashboard together: with only the
-  new hook, headless calls disappear from the table instead of folding into it.
+  and prompt) instead of announcing each as a session. They are not counted as sessions
+  anywhere: not in Running, the status light, the records or the day's tally.
+
+## Home Assistant files 0.6.0 (2026-11-03)
+
+**To update:** copy `packages/claude_fleet.yaml` and `dashboards/claude_fleet.yaml` again,
+and restart. Update the hook on each computer as well ([Hook 0.1.15](#hook-0115-2026-11-03)).
+
+- **One row for headless calls.** Both Sessions tables show one row per computer for its
+  `claude -p` and Agent SDK calls, while a call is running or for two hours after the last,
+  read from the hook's new `sensor.claude_<machine>_headless`.
 - **The setup banner clears when sessions come back.** After the cleanup removed the last
   session, `binary_sensor.claude_fleet_setup_needed` could stay on after new sessions
   reported, and the Sessions tab then warned that a Mac was running an out-of-date hook when
   none was. With no sessions, the sensor re-checked only when another sensor changed; it now
-  re-checks every minute as well. Copy `packages/claude_fleet.yaml` again.
+  re-checks every minute as well.
 
 ## Home Assistant files 0.5.1 (2026-10-28)
 
