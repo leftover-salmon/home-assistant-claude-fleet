@@ -189,6 +189,11 @@ template:
         icon: mdi:list-status
         state: >
           {%- set ss = states.sensor | selectattr('attributes.claude_session', 'defined') | list %}
+          {#- now() here, not only in the loop: with no sessions the loop never runs,
+              so the template would re-check only on a sensor event, and on 2026-11-03
+              it stayed on for 20 hours after the sessions came back. This makes it
+              re-check every minute whatever the count. -#}
+          {%- set _minute = now().minute %}
           {%- set ns = namespace(old=false) %}
           {%- for s in ss %}
           {%- set fresh = (as_timestamp(now()) - as_timestamp(s.attributes.get('last_seen'), 0)) < 900 %}

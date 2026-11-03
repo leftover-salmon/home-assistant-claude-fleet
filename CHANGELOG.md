@@ -29,6 +29,11 @@ Changes on `main` that are not in a release yet.
   two hours after the last. They are not counted as sessions anywhere: not in Running, the status
   light, the records or the day's tally. Needs the hook and the dashboard together: with only the
   new hook, headless calls disappear from the table instead of folding into it.
+- **The setup banner clears when sessions come back.** After the cleanup removed the last
+  session, `binary_sensor.claude_fleet_setup_needed` could stay on after new sessions
+  reported, and the Sessions tab then warned that a Mac was running an out-of-date hook when
+  none was. With no sessions, the sensor re-checked only when another sensor changed; it now
+  re-checks every minute as well. Copy `packages/claude_fleet.yaml` again.
 
 ## Home Assistant files 0.5.1 (2026-10-28)
 
