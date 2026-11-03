@@ -65,7 +65,10 @@ def check_entities(states):
 
 
 # ================================================================== HA's log
-HEADER = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+) (DEBUG|INFO|WARNING|ERROR|CRITICAL) "
+# The time may carry a UTC offset: Home Assistant 2026.11 writes
+# "2026-11-03 09:29:08.985-08:00 WARNING ...", where earlier versions stopped at the
+# milliseconds.
+HEADER = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+(?:[+-]\d\d:\d\d|Z)?) (DEBUG|INFO|WARNING|ERROR|CRITICAL) "
                     r"\(([^)]*)\) \[([^\]]+)\] ?(.*)$")
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 LOOSE_LEVEL = re.compile(r"\b(ERROR|CRITICAL)\b")
@@ -836,6 +839,13 @@ def self_test():
     expect("log: HA's normal noise, a Template loop and ANSI colour pass", check_log(GOOD_LOG), False)
     for name, bad in BAD_LOGS.items():
         expect("log: %s fails" % name, check_log(GOOD_LOG + bad), True)
+    # Home Assistant 2026.11 puts a UTC offset on the time: the same log in that
+    # format must parse entry for entry, pass, and still fail on an ERROR
+    offset = lambda t: re.sub(r"^((?:\x1b\[[0-9;]*m)?\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+) ", r"\1-08:00 ", t, flags=re.M)
+    expect("log: times with a UTC offset (HA 2026.11) parse and pass",
+           check_log(offset(GOOD_LOG)) + ([] if len(parse_log(offset(GOOD_LOG))) == len(parse_log(GOOD_LOG)) == 4 else ["parsed %d entries" % len(parse_log(offset(GOOD_LOG)))]), False)
+    expect("log: an ERROR with a UTC offset fails as an ERROR",
+           [f for f in check_log(offset(GOOD_LOG + BAD_LOGS["an ERROR from any logger"])) if "not in HA's log format" not in f], True)
     folded = parse_log(BAD_LOGS["an ERROR from any logger"])
     expect("log: a traceback folds into its entry", [] if len(folded) == 1 and len(folded[0]["lines"]) == 4 else ["folded %s" % folded], False)
 
