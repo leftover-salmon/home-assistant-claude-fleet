@@ -275,3 +275,9 @@ They are here so they cost it once, and most of them apply well beyond this proj
   removed after its merge turned the project "marcus" into "marcus-1852" for the rest of the
   session. The first chart to group by project showed four Marcuses. A folder that is gone
   now keeps the name it had.
+- **A counter that blinks to 0 is a reset to anything that sums rises.** The by-day bars add
+  up every rise and treat a drop as a new count. At shutdown the total went unavailable first,
+  and the per-model sensors built from its attribute re-rendered as 0 before going unavailable
+  themselves, so every restart drew the day again on top of itself. PRs today had already hit
+  this and been fixed for itself alone. A sensor derived from another's attribute says
+  unavailable when that attribute is missing, never 0.

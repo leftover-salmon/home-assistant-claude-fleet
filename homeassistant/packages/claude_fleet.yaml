@@ -743,12 +743,19 @@ template:
   # (opus-5-5 -> opus), so a new release lands in the right stack; anything
   # else is "other". The Tokens today card keeps the exact per-model split.
   # Generated, one pair per family: total tokens, and output tokens alone.
+  # UNAVAILABLE, never 0, while the breakdown is missing. At every shutdown
+  # sensor.claude_tokens_today goes unavailable first and its breakdown goes with
+  # it; these re-rendered as 0 in that instant, and the by-day bars, which add
+  # up every rise and take a drop for a reset, counted the whole day twice
+  # (2026-11-03: 1.06 billion tokens drawn as 2.2). Unavailable is a gap, not a
+  # drop, so the day goes on from where it was.
   - sensor:
       - name: Claude tokens today opus
         unique_id: claude_tokens_today_opus
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
@@ -763,6 +770,7 @@ template:
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
@@ -777,6 +785,7 @@ template:
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
@@ -791,6 +800,7 @@ template:
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
@@ -805,6 +815,7 @@ template:
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
@@ -819,6 +830,7 @@ template:
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
@@ -833,6 +845,7 @@ template:
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
@@ -847,6 +860,7 @@ template:
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
@@ -861,6 +875,7 @@ template:
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}
@@ -875,6 +890,7 @@ template:
         unit_of_measurement: tokens
         state_class: measurement
         icon: mdi:counter
+        availability: "{{ state_attr('sensor.claude_tokens_today', 'breakdown') is mapping }}"
         state: >
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {%- set bm = b.get('by_model') if (b is mapping and b.get('by_model') is mapping) else {} %}

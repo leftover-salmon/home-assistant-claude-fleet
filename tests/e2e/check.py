@@ -247,6 +247,31 @@ def check_projects(states, exp):
     return out
 
 
+# The ten per-family token sensors the by-day bars stack. The chart adds up every
+# rise and takes a drop for a reset, so a 0 between two readings draws the day
+# twice: at every shutdown sensor.claude_tokens_today went unavailable first, its
+# breakdown with it, and these read 0 for an instant (2026-11-03 drew 1.06
+# billion tokens as 2.2). Unavailable is a gap the chart skips.
+FAMILY_TOKENS = ["sensor.claude_%stokens_today_%s" % (o, f) for o in ("", "output_")
+                 for f in ("opus", "sonnet", "haiku", "fable", "other")]
+
+
+def check_family_gap(during, after):
+    """`during`: the family sensors' states while sensor.claude_tokens_today had no
+    breakdown (as at shutdown); `after`: once it had one again. During, each must
+    be unavailable, never a number; after, each a number again."""
+    out = []
+    for eid in FAMILY_TOKENS:
+        d, a = during.get(eid, "missing"), after.get(eid, "missing")
+        if d != "unavailable":
+            out.append("%s = %r with no breakdown; a number there is a drop the by-day bars count twice" % (eid, d))
+        try:
+            float(a)
+        except ValueError:
+            out.append("%s = %r once the breakdown is back, expected a number" % (eid, a))
+    return out
+
+
 # The entity the "Output tokens by machine" chart asks for; check_dashboard holds
 # the dashboard to this exact string, check_sessions holds the hook's sensors to it.
 MACHINE_TOKENS_WILDCARD = "sensor.claude_machine_*_output_tokens"
@@ -1009,6 +1034,14 @@ def self_test():
     expect("projects: a wrong count in the state fails", check_projects(_set(states, PROJ, "7"), exp), True)
     expect("projects: no sensor fails", check_projects(_drop(states, PROJ), exp), True)
 
+    # ---- the per-family token sensors: a gap, never a 0, at shutdown
+    unav = {e: "unavailable" for e in FAMILY_TOKENS}
+    nums = {e: "5" for e in FAMILY_TOKENS}
+    expect("family gap: unavailable then numbers passes", check_family_gap(unav, nums), False)
+    expect("family gap: a 0 during the gap fails", check_family_gap(dict(unav, **{FAMILY_TOKENS[0]: "0"}), nums), True)
+    expect("family gap: still unavailable after fails", check_family_gap(unav, dict(nums, **{FAMILY_TOKENS[3]: "unavailable"})), True)
+    expect("family gap: a missing sensor fails", check_family_gap({}, {}), True)
+
     # ---- Today card
     line = "**6** sessions · **%d** prompts · **3** PRs · **28** min waiting on you" % exp["prompts"]
     good = [{"path": "/x", "title": "Today", "result": line}]
@@ -1131,6 +1164,7 @@ def live():
     record("personal records: today's output overtook the seeded output record", f_rec)
     record("tokens by project: one entry per repository, the sessions' sums", check_projects(states(), exp))
 
+
     # ---- markdown templates, strict, with the live controls first: a broken
     # template must come back as an error through this exact path, a trivial one
     # must come back clean
@@ -1228,6 +1262,27 @@ def live():
     a = (u_on or {}).get("attributes", {})
     record("update check: on by default, adds update.claude_fleet (latest %s), off removes it" % a.get("latest_version"),
            check_update(u_on, u_off, read_repo_versions()["package"], fresh, n_older, n_off))
+
+    # ---- shutdown: sensor.claude_tokens_today loses its breakdown first. Do that
+    # to it here; the family sensors must go unavailable, not 0, and come back.
+    def fam():
+        st, r = ha.http("GET", "/api/states", token=ha.token())
+        return {x["entity_id"]: x["state"] for x in r if x["entity_id"] in FAMILY_TOKENS} if st == 200 else {}
+    ha.http("POST", "/api/states/sensor.claude_tokens_today", {"state": "unavailable", "attributes": {}},
+            token=ha.token())
+    time.sleep(3)
+    during = fam()
+    # the template keeps its last result and will not write it again unasked; a
+    # reload renders it afresh, as the start after a restart does
+    ha.http("POST", "/api/services/template/reload", {}, token=ha.token())
+    end = time.time() + 30
+    while True:
+        after = fam()
+        if all(re.match(r"^[0-9.]+$", after.get(e, "")) for e in FAMILY_TOKENS) or time.time() > end:
+            break
+        time.sleep(2)
+    record("token families: unavailable, not 0, while the total has no breakdown (as at shutdown)",
+           check_family_gap(during, after))
 
     # ---- repairs and the log, last, so they cover everything above
     issues = ha.ws([{"type": "repairs/list_issues"}])[0]["result"]["issues"]

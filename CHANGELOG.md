@@ -44,6 +44,12 @@ change the `extra_module_url` line in `configuration.yaml` to
   prompts, PRs and wait minutes for the day dropped, then jumped back when it resumed, and
   the token rate (flow card, desk clock) showed the jump as a burst of writing. The later
   archive now replaces the earlier one.
+- **Tokens by day no longer counts a day twice across a restart.** At every shutdown the
+  per-model token sensors read 0 for an instant, and the chart takes a drop for the start of
+  a new count, so the day's tokens were added again when they came back (one day drew 1.06
+  billion tokens as 2.2). They now read unavailable instead, which the chart skips. Bars
+  already drawn twice correct themselves once Home Assistant's 10 days of raw history have
+  passed.
 
 ## Hook 0.1.15 (2026-11-03)
 
