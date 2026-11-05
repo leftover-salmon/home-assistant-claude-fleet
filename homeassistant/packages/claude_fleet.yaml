@@ -858,6 +858,12 @@ template:
 
   # Keeps today's counters for sessions that the cleanup has removed, so the
   # recap and the "Today" card still include them. Resets at midnight.
+  # A session can be archived more than once a day: it idles out, is resumed,
+  # and idles out again. The LATER archive replaces the earlier entry. Keeping
+  # the first one meant a session archived at 2,000 tokens and resumed to
+  # 94,000 fell back to 2,000 the second time it was removed: today's totals
+  # dropped by the difference, climbed back when it resumed, and the token rate
+  # read that climb as 92,000 tokens written in a minute.
   - triggers:
       - trigger: event
         event_type: claude_session_archived
@@ -872,16 +878,15 @@ template:
           {% set prev = this.attributes.get('sessions', []) if this.attributes.get('day', '') == today else [] %}
           {% set add = 1 if (trigger.platform == 'event' and trigger.event.data.day == today
                              and trigger.event.data.session_id not in (prev | map(attribute='session_id') | list)) else 0 %}
-          {{ (prev | count) + add }}
+          {{ (prev | count) + add }}{# a re-archive replaces its entry: the count stays #}
         attributes:
           day: "{{ now().strftime('%Y-%m-%d') }}"
           sessions: >
             {% set today = now().strftime('%Y-%m-%d') %}
             {% set prev = this.attributes.get('sessions', []) if this.attributes.get('day', '') == today else [] %}
-            {% if trigger.platform == 'event' and trigger.event.data.day == today
-                  and trigger.event.data.session_id not in (prev | map(attribute='session_id') | list) %}
+            {% if trigger.platform == 'event' and trigger.event.data.day == today %}
               {% set d = trigger.event.data %}
-              {{ prev + [{'session_id': d.session_id, 'label': d.label, 'machine': d.machine,
+              {{ (prev | rejectattr('session_id', 'eq', d.session_id) | list) + [{'session_id': d.session_id, 'label': d.label, 'machine': d.machine,
                           'prompts_today': d.prompts_today | int(0), 'prs_today': d.prs_today | default([], true) | list,
                           'wait_minutes_today': d.wait_minutes_today | int(0), 'day': d.day,
                           'tokens_today': d.get('tokens_today') if d.get('tokens_today') is mapping else {},

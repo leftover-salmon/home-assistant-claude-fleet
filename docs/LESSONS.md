@@ -264,3 +264,9 @@ They are here so they cost it once, and most of them apply well beyond this proj
   its servers online, so a restart straight after onboarding sometimes lands in the middle of
   it. A test that forbids ERROR lines then fails at random for a reason that is not the
   product's. The demo now waits for config entries to settle before its restart.
+- **A record kept "once per id" goes stale when the id comes back.** The archive kept a
+  session's counters the first time the cleanup removed it and ignored later archives of the
+  same session. A session can idle out, resume and idle out again in one day, so the second
+  removal put back the first snapshot: today's output fell by 92,000 tokens, climbed back
+  when the session resumed, and the token rate drew that climb as 36,000 tokens a minute.
+  The later archive now replaces the earlier one.

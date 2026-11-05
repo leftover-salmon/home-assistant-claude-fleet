@@ -21,6 +21,12 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+- **Today's totals no longer drop when a session is archived twice.** A session that idled
+  out, was resumed and idled out again fell back to its first archived counts, so tokens,
+  prompts, PRs and wait minutes for the day dropped, then jumped back when it resumed, and
+  the token rate (flow card, desk clock) showed the jump as a burst of writing. The later
+  archive now replaces the earlier one.
+
 ## Hook 0.1.15 (2026-11-03)
 
 **To update:** with the plugin, `/plugin` → **Marketplaces** → claude-fleet → **Update**,
