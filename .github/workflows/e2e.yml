@@ -58,6 +58,12 @@ jobs:
       - name: The flow card wakes up without a flood
         run: tests/flow_card_test.sh
 
+      - name: The timeline and projects cards draw the right lanes and bars
+        run: tests/cards_test.sh
+
+      - name: A removed worktree keeps its session's project
+        run: tests/repo_of_test.sh
+
       - name: Self-test (every check must be able to fail)
         run: tests/e2e/run.sh selftest
 

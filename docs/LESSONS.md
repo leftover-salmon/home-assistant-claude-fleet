@@ -270,3 +270,8 @@ They are here so they cost it once, and most of them apply well beyond this proj
   removal put back the first snapshot: today's output fell by 92,000 tokens, climbed back
   when the session resumed, and the token rate drew that climb as 36,000 tokens a minute.
   The later archive now replaces the earlier one.
+- **A name worked out from a path is only right while the path exists.** The hook named a
+  session's project from the folder it last edited in, every time it ran, so a worktree
+  removed after its merge turned the project "marcus" into "marcus-1852" for the rest of the
+  session. The first chart to group by project showed four Marcuses. A folder that is gone
+  now keeps the name it had.

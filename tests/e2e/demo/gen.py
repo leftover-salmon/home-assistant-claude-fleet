@@ -639,7 +639,7 @@ def cmd_prepare():
                      "home": os.path.join(HOMES, s["machine"]), "cwd": s["repo_dir"],
                      "transcript": path, "final": s["final"], "stale": bool(s.get("stale")),
                      "for_min": s["for_min"], "prompts": s["prompts"], "wait_min": s["wait_min"],
-                     "last_prompt": s["asks"][-1], "label": s["label"], "tokens": tot,
+                     "last_prompt": s["asks"][-1], "label": s["label"], "tokens": tot, "repo": s["repo"],
                      "edit": os.path.join(s["repo_dir"], "src", "index.ts")})
     live["fam"] = live_fam
     tot_all = {"cache_read": 0, "in": 0}

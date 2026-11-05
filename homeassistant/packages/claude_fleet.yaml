@@ -549,6 +549,96 @@ template:
           {%- set b = state_attr('sensor.claude_tokens_today', 'breakdown') %}
           {{ (b.get('output', 0) if b is mapping else 0) | int(0) }}
 
+  # Today's tokens by PROJECT: the repository a session works in, or its folder
+  # when it is not in one (the hook reports either as `repo`), so the card reads
+  # the same for someone who never uses git. Each: all tokens, and output alone.
+  # Biggest first. The state is how many projects there were.
+  - sensor:
+      - name: Claude tokens by project today
+        unique_id: claude_tokens_by_project_today
+        icon: mdi:folder-multiple-outline
+        # how many projects worked on today (counted here, not from the attribute
+        # below: `this` is the PREVIOUS state, so it would lag a render behind)
+        state: >
+          {%- set today = now().strftime('%Y-%m-%d') %}
+          {%- set live = states.sensor | selectattr('attributes.claude_session', 'defined')
+               | selectattr('attributes.day', 'eq', today) | map(attribute='attributes') | list %}
+          {%- set ids = live | map(attribute='session_id') | list %}
+          {%- set arch = (state_attr('sensor.claude_archived_today', 'sessions') or [])
+               if state_attr('sensor.claude_archived_today', 'day') == today else [] %}
+          {%- set ns = namespace(names=[]) %}
+          {%- for s in live + (arch | rejectattr('session_id', 'in', ids) | list) %}
+          {%- set k = s.get('tokens_today') if s.get('tokens_today') is mapping else {} %}
+          {%- if ((k.get('input', 0) | int(0)) + (k.get('output', 0) | int(0))
+                  + (k.get('cache_read', 0) | int(0)) + (k.get('cache_write', 0) | int(0))) > 0 %}
+          {%- set ns.names = ns.names + [(s.get('repo') or '') | string | trim or '(no project)'] %}
+          {%- endif %}
+          {%- endfor %}
+          {{ ns.names | unique | list | count }}
+        attributes:
+          projects: >
+            {%- set today = now().strftime('%Y-%m-%d') %}
+            {%- set live = states.sensor | selectattr('attributes.claude_session', 'defined')
+                 | selectattr('attributes.day', 'eq', today) | map(attribute='attributes') | list %}
+            {%- set ids = live | map(attribute='session_id') | list %}
+            {%- set arch = (state_attr('sensor.claude_archived_today', 'sessions') or [])
+                 if state_attr('sensor.claude_archived_today', 'day') == today else [] %}
+            {%- set ns = namespace(by={}) %}
+            {%- for s in live + (arch | rejectattr('session_id', 'in', ids) | list) %}
+            {%- set k = s.get('tokens_today') if s.get('tokens_today') is mapping else {} %}
+            {%- set t = (k.get('input', 0) | int(0)) + (k.get('output', 0) | int(0))
+                        + (k.get('cache_read', 0) | int(0)) + (k.get('cache_write', 0) | int(0)) %}
+            {%- if t > 0 %}
+            {%- set name = (s.get('repo') or '') | string | trim or '(no project)' %}
+            {%- set o = ns.by.get(name, [0, 0]) %}
+            {%- set ns.by = dict(ns.by, **{name: [o[0] + t, o[1] + (k.get('output', 0) | int(0))]}) %}
+            {%- endif %}
+            {%- endfor %}
+            {%- set ns2 = namespace(out=[]) %}
+            {%- for name, v in ns.by.items() %}
+            {%- set ns2.out = ns2.out + [{'name': name, 'total': v[0], 'output': v[1]}] %}
+            {%- endfor %}
+            {{ ns2.out | sort(attribute='total', reverse=true) }}
+
+  # The same, one entry a day, for the trend. A chart series is an entity and a
+  # new project cannot become one on the fly, so the days are kept here and the
+  # projects card draws them. Written once a day, just before midnight, from the
+  # sensor above: every minute would put a few kilobytes into the recorder each
+  # time. Home Assistant down at that moment means that day is missing; nothing
+  # can rebuild it afterwards, because the day's counters reset at midnight.
+  # Each day keeps its biggest PROJECTS_KEPT projects and folds the rest into
+  # "(others)", and DAYS_KEPT days in all, which keeps the attribute well under
+  # the recorder's 16 KB. [all tokens, output] per project.
+  - triggers:
+      - trigger: time
+        at: "23:59:30"
+    sensor:
+      - name: Claude tokens by project by day
+        unique_id: claude_tokens_by_project_by_day
+        icon: mdi:folder-clock-outline
+        state: "{{ now().strftime('%Y-%m-%d') }}"   # the day last written
+        attributes:
+          days: >
+            {%- set DAYS_KEPT = 60 %}{% set PROJECTS_KEPT = 7 %}
+            {%- set prev = this.attributes.get('days') %}
+            {%- set prev = prev if prev is mapping else {} %}
+            {%- set ps = state_attr('sensor.claude_tokens_by_project_today', 'projects') or [] %}
+            {%- set ns = namespace(day={}, ot=0, oo=0) %}
+            {%- for p in ps %}
+            {%- if loop.index <= PROJECTS_KEPT %}
+            {%- set ns.day = dict(ns.day, **{p.name: [p.total, p.output]}) %}
+            {%- else %}
+            {%- set ns.ot = ns.ot + p.total %}{% set ns.oo = ns.oo + p.output %}
+            {%- endif %}
+            {%- endfor %}
+            {%- if ns.ot > 0 %}{% set ns.day = dict(ns.day, **{'(others)': [ns.ot, ns.oo]}) %}{% endif %}
+            {%- set today = now().strftime('%Y-%m-%d') %}
+            {%- set ns2 = namespace(keep={}) %}
+            {%- for d in (prev.keys() | list | reject('eq', today) | sort)[-(DAYS_KEPT - 1):] %}
+            {%- set ns2.keep = dict(ns2.keep, **{d: prev[d]}) %}
+            {%- endfor %}
+            {{ dict(ns2.keep, **{today: ns.day}) if ns.day else ns2.keep }}
+
   # PRs the fleet's sessions opened today, live and archived, each counted once.
   # The same list the Today card and the records read. A number of its own so
   # the Tokens tab can draw PRs by day: a chart series is an entity.
@@ -864,6 +954,9 @@ template:
   # 94,000 fell back to 2,000 the second time it was removed: today's totals
   # dropped by the difference, climbed back when it resumed, and the token rate
   # read that climb as 92,000 tokens written in a minute.
+  # Each entry also keeps the session's entity, project and when it was
+  # archived: the timeline card reads that entity's history for the day, and
+  # ends the lane where the cleanup removed it.
   - triggers:
       - trigger: event
         event_type: claude_session_archived
@@ -887,6 +980,8 @@ template:
             {% if trigger.platform == 'event' and trigger.event.data.day == today %}
               {% set d = trigger.event.data %}
               {{ (prev | rejectattr('session_id', 'eq', d.session_id) | list) + [{'session_id': d.session_id, 'label': d.label, 'machine': d.machine,
+                          'entity_id': d.get('entity_id', ''), 'repo': d.get('repo', ''),
+                          'archived_at': trigger.event.time_fired.isoformat(),
                           'prompts_today': d.prompts_today | int(0), 'prs_today': d.prs_today | default([], true) | list,
                           'wait_minutes_today': d.wait_minutes_today | int(0), 'day': d.day,
                           'tokens_today': d.get('tokens_today') if d.get('tokens_today') is mapping else {},
@@ -1390,6 +1485,7 @@ automation:
                     or silent > silent_max_hours * 3600 %}
                 {% set ns.out = ns.out + [{'disc': a.discovery_topic, 'base': a.topic_base,
                     'session_id': a.session_id, 'label': a.label, 'machine': a.machine,
+                    'entity_id': s.entity_id, 'repo': a.get('repo') or '',
                     'prompts_today': a.prompts_today | int(0),
                     'prs_today': a.prs_today | default([], true) | list,
                     'wait_minutes_today': a.wait_minutes_today | int(0), 'day': a.day,
@@ -1405,6 +1501,8 @@ automation:
                 session_id: "{{ repeat.item.session_id }}"
                 label: "{{ repeat.item.label }}"
                 machine: "{{ repeat.item.machine }}"
+                entity_id: "{{ repeat.item.entity_id }}"
+                repo: "{{ repeat.item.repo }}"
                 prompts_today: "{{ repeat.item.prompts_today }}"
                 prs_today: "{{ repeat.item.prs_today }}"
                 wait_minutes_today: "{{ repeat.item.wait_minutes_today }}"

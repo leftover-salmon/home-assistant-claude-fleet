@@ -147,6 +147,21 @@ pub() { # topic payload
 
 slug() { tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/_/g; s/^_+|_+$//g'; }
 
+# The project a session works in: the name of its repository's origin, else of
+# its repository folder, else of the folder itself. A folder that no longer
+# exists keeps the name it had ($2): a worktree is removed once its branch
+# merges, and worked out from the bare path every session that had worked in
+# ~/marcus-1852 became the project "marcus-1852" instead of "marcus".
+repo_of() {
+  local dir=$1 prev=${2:-} r top
+  r=$(git -C "$dir" remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#.*[/:]##')
+  if [ -n "$r" ]; then printf '%s' "$r"; return; fi
+  top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)
+  if [ -n "$top" ]; then basename "$top"; return; fi
+  if [ ! -d "$dir" ] && [ -n "$prev" ]; then printf '%s' "$prev"; return; fi
+  basename "$dir"
+}
+
 # ---- RTK savings, per machine ----------------------------------------------
 # RTK keeps its own ledger (SQLite). Published as one sensor per machine,
 # throttled, because it is the same figure for every session on the Mac.
@@ -519,8 +534,7 @@ main() {
   [ -z "$workdir" ] && workdir="$cwd"
 
   branch=$(git -C "$workdir" rev-parse --abbrev-ref HEAD 2>/dev/null)
-  repo=$(git -C "$workdir" remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#.*[/:]##')
-  [ -z "$repo" ] && repo=$(basename "$(git -C "$workdir" rev-parse --show-toplevel 2>/dev/null || echo "$workdir")")
+  repo=$(repo_of "$workdir" "$(g repo)")
 
   # ---- PR for current branch (cached) --------------------------------------
   local pr_num pr_url pr_title pr_checked

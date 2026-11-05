@@ -47,6 +47,7 @@ KEY_ENTITIES = [
     "binary_sensor.claude_fleet_setup_needed", "input_text.claude_fleet_quip",
     "input_boolean.claude_lamp_enabled", "input_datetime.claude_recap_time",
     "input_boolean.claude_fleet_update_check", "input_text.claude_fleet_defaults_applied",
+    "sensor.claude_tokens_by_project_today", "sensor.claude_tokens_by_project_by_day",
 ]
 
 
@@ -178,6 +179,9 @@ def expected_from(sessions, gen_sessions):
                                      "prompts": p["prompts"], "tokens": k}
         exp["tokens"] += k["input"] + k["output"] + k["cache_read"] + k["cache_write"]
         exp["output"] += k["output"]
+        pr = exp.setdefault("by_project", {}).setdefault(p.get("repo") or "(no project)", [0, 0])
+        pr[0] += k["input"] + k["output"] + k["cache_read"] + k["cache_write"]
+        pr[1] += k["output"]
         m = p.get("machine", "one")
         exp["by_machine"][m] = exp["by_machine"].get(m, 0) + k["output"]
         exp["prompts"] += p["prompts"]
@@ -212,6 +216,34 @@ def check_records(states, exp, today):
         out.append("output record = %s, expected today's output %d" % (x.get("value"), exp["output"]))
     if x.get("id") != today:
         out.append("output record set on %s, expected today (%s) to have overtaken the seeded one" % (x.get("id"), today))
+    return out
+
+
+def check_projects(states, exp):
+    """Today's tokens by project: one entry per repository the scenario's sessions
+    worked in, each with exactly those sessions' summed tokens, biggest first, and
+    the state is how many there are. Feeds the projects card."""
+    st = next((s for s in states if s["entity_id"] == "sensor.claude_tokens_by_project_today"), None)
+    if st is None:
+        return ["sensor.claude_tokens_by_project_today is missing"]
+    got = st["attributes"].get("projects")
+    if not isinstance(got, list):
+        return ["sensor.claude_tokens_by_project_today has no projects list: %r" % (got,)]
+    out = []
+    want = exp.get("by_project", {})
+    have = {p.get("name"): [p.get("total"), p.get("output")] for p in got if isinstance(p, dict)}
+    for name, v in sorted(want.items()):
+        if name not in have:
+            out.append("project %r missing (has %s)" % (name, sorted(have)))
+        elif have[name] != v:
+            out.append("project %r: [total, output] = %s, expected %s" % (name, have[name], v))
+    for name in sorted(set(have) - set(want)):
+        out.append("project %r is not one the sessions worked in" % name)
+    totals = [p.get("total", 0) for p in got if isinstance(p, dict)]
+    if totals != sorted(totals, reverse=True):
+        out.append("projects are not biggest first: %s" % totals)
+    if st["state"] != str(len(want)):
+        out.append("state = %r, expected %d projects" % (st["state"], len(want)))
     return out
 
 
@@ -587,6 +619,8 @@ CARD_KEYS = {
     "gauge": COMMON | {"entity", "name", "unit", "min", "max", "needle", "severity", "segments", "theme",
                        "attribute", "tap_action", "hold_action", "double_tap_action"},
     "custom:claude-fleet-flow-card": COMMON | {"entity", "name", "max"},
+    "custom:claude-fleet-timeline-card": COMMON | {"title"},
+    "custom:claude-fleet-projects-card": COMMON | {"title", "days", "today_entity", "days_entity"},
     "custom:history-explorer-card": COMMON | {
         "header", "graphs", "defaultTimeRange", "uiLayout", "statistics", "labelAreaWidth", "cardName",
         "showUnavailable", "decimation", "rounding", "timeTicks", "lineGraphHeight", "barGraphHeight",
@@ -668,6 +702,10 @@ def check_flow_card(served, index_html):
     out = []
     if 'customElements.define("claude-fleet-flow-card"' not in served:
         out.append("%s is not the flow card (not copied to /config/www?): %r" % (FLOW_CARD_URL, served[:80]))
+    else:
+        for el in ("claude-fleet-timeline-card", "claude-fleet-projects-card"):
+            if 'customElements.define("%s"' % el not in served:
+                out.append("%s does not define %s: an older copy of the file?" % (FLOW_CARD_URL, el))
     v = _first(r'const FLOW_VERSION = "([^"]+)"', served)
     want = "%s?v=%s" % (FLOW_CARD_URL, v)
     if FLOW_CARD_URL not in index_html:
@@ -716,6 +754,7 @@ def _synthetic():
              ("d", "idle", False, 1), ("e", "ended", False, 2), ("f", "working", False, 6)]
     for i, (key, final, stale, prompts) in enumerate(specs):
         sessions.append({"sid": "sid-" + key, "label": "Session " + key, "final": final, "stale": stale,
+                         "repo": "alpha" if key in "ab" else "beta",
                          "prompts": prompts, "tokens": {"input": 10 + i, "output": 100 + i, "cache_read": 1000 * (i + 1),
                                                         "cache_write": 50 + i, "calls": 5 + i}})
     gen_sessions = [{"prs": [(7, 30)]}, {"prs": [(8, -1)]}, {"prs": [(9, 5), (10, 1)]}]
@@ -744,7 +783,12 @@ def _synthetic():
     states += [{"entity_id": k, "state": v, "attributes": {}} for k, v in fixed.items()]
     states += [{"entity_id": "sensor.claude_machine_%s_output_tokens" % m, "state": str(v),
                 "attributes": {"claude_machine_tokens": True, "machine": m}} for m, v in exp["by_machine"].items()]
-    states = [s for s in states if s["entity_id"] != "sensor.claude_fleet_records"]
+    states = [s for s in states if s["entity_id"] not in ("sensor.claude_fleet_records",
+                                                          "sensor.claude_tokens_by_project_today")]
+    projects = sorted(({"name": n, "total": v[0], "output": v[1]} for n, v in exp["by_project"].items()),
+                      key=lambda p: -p["total"])
+    states.append({"entity_id": "sensor.claude_tokens_by_project_today", "state": str(len(projects)),
+                   "attributes": {"projects": projects}})
     states.append({"entity_id": "sensor.claude_fleet_records", "state": "1", "attributes": {"records": {
         "output_day": {"value": exp["output"], "label": "", "id": SELFTEST_DAY, "at": SELFTEST_DAY + "T12:00:00"}}}})
     return sessions, gen_sessions, exp, states
@@ -952,6 +996,19 @@ def self_test():
     expect("alerts: an alert naming another session fails",
            check_alerts(al_states, [{"name": ALERT_LOG_NAME, "message": "Claude is waiting on you: Session b"}], exp), True)
 
+    # ---- tokens by project
+    PROJ = "sensor.claude_tokens_by_project_today"
+    good_p = next(x for x in states if x["entity_id"] == PROJ)["attributes"]["projects"]
+    expect("projects: the sessions' sums per repository pass", check_projects(states, exp), False)
+    expect("projects: a wrong total fails", check_projects(_set(states, PROJ, projects=[
+        dict(good_p[0], total=good_p[0]["total"] + 1)] + good_p[1:]), exp), True)
+    expect("projects: a missing project fails", check_projects(_set(states, PROJ, projects=good_p[:1]), exp), True)
+    expect("projects: a project nobody worked in fails", check_projects(_set(states, PROJ, projects=good_p + [
+        {"name": "ghost", "total": 1, "output": 0}]), exp), True)
+    expect("projects: smallest first fails", check_projects(_set(states, PROJ, projects=good_p[::-1]), exp), True)
+    expect("projects: a wrong count in the state fails", check_projects(_set(states, PROJ, "7"), exp), True)
+    expect("projects: no sensor fails", check_projects(_drop(states, PROJ), exp), True)
+
     # ---- Today card
     line = "**6** sessions · **%d** prompts · **3** PRs · **28** min waiting on you" % exp["prompts"]
     good = [{"path": "/x", "title": "Today", "result": line}]
@@ -995,6 +1052,8 @@ def self_test():
     page = '<script>import("%s?v=%s")</script>' % (FLOW_CARD_URL, flow_v)
     expect("flow card: the repo's file, listed on the front page, passes", check_flow_card(card_js, page), False)
     expect("flow card: a 404 page fails", check_flow_card("404: Not Found", page), True)
+    expect("flow card: an older file without the timeline card fails",
+           check_flow_card(card_js.replace('customElements.define("claude-fleet-timeline-card"', "x"), page), True)
     expect("flow card: a front page that does not load it fails", check_flow_card(card_js, "<html></html>"), True)
     expect("flow card: a front page loading it with no version fails",
            check_flow_card(card_js, '<script>import("%s")</script>' % FLOW_CARD_URL), True)
@@ -1070,6 +1129,7 @@ def live():
             break
         time.sleep(5)
     record("personal records: today's output overtook the seeded output record", f_rec)
+    record("tokens by project: one entry per repository, the sessions' sums", check_projects(states(), exp))
 
     # ---- markdown templates, strict, with the live controls first: a broken
     # template must come back as an error through this exact path, a trivial one

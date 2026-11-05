@@ -678,6 +678,16 @@ views:
               {%- endfor %}
               {%- endif %}
 
+          # ---------------------------------------------------------- timeline
+          # Today, one lane per session: working, waiting on you, idle. The
+          # Today card says how long sessions waited on you; this says when, and
+          # whether several waited at once. This repo's own card (in
+          # www/claude-fleet-flow-card.js, beside the stream), drawn from the
+          # recorder; sessions the cleanup already removed stay on it.
+          - type: custom:claude-fleet-timeline-card
+            title: Today, session by session
+            grid_options: { columns: full }
+
           # ------------------------------------------------------------- today
           # An even split whatever the screen: fixed widths (24 + 24 of a 48-column section) left each card alone on its row once a narrower screen shrank the section to 36.
           - type: grid
@@ -1183,6 +1193,16 @@ views:
                   - entity: sensor.claude_tokens_today_other
                     name: Other
                     color: "#8a8a8a"
+
+          # -------------------------------------------------------- by project
+          # Where the tokens went, by project (the repository, or the folder when
+          # there is none), today and by day. Not a history-explorer chart: a series
+          # there is an entity, and projects come and go. The card says so in a
+          # sentence when everything was in one project. The days are kept by
+          # sensor.claude_tokens_by_project_by_day, saved just before midnight.
+          - type: custom:claude-fleet-projects-card
+            grid_options: { columns: full }
+            days: 30
 
           # --------------------------------------------------------- RTK by day
           # Two graphs in one card, so they share a time axis: tokens RTK kept out

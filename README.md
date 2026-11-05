@@ -15,13 +15,14 @@ status light and a daily recap.
 What you get:
 
 - **Sessions tab:** every session live (working, waiting on you, idle, stale), its model,
-  context use and tokens today; what it is working on; the day so far; personal records;
+  context use and tokens today; what it is working on; the day so far, and a timeline of
+  when each session worked and when it waited on you; personal records;
   one row per computer; how fast the fleet is writing right now (output tokens a minute);
   how many sessions ran at once; your Claude plan limits and whether you are on course to
   hit them.
 - **Tokens tab:** today's tokens by model and by kind, cache hit rate and compactions, and
-  the same by day over any range you pick; output by computer in ten-minute bars; PRs
-  opened by day. Plus what [RTK](https://github.com/rtk-ai/rtk)
+  the same by day over any range you pick; where the tokens went by project (repository, or
+  folder), today and day by day; output by computer in ten-minute bars; PRs opened by day. Plus what [RTK](https://github.com/rtk-ai/rtk)
   saved, if you use it.
 - **Setup tab:** a checklist of what is working and what you could add next, and the
   switches.
@@ -121,7 +122,7 @@ lovelace:
       filename: dashboards/claude_fleet.yaml
 frontend:
   extra_module_url:
-    - /local/claude-fleet-flow-card.js?v=3
+    - /local/claude-fleet-flow-card.js?v=4
 ```
 
 Both files are called `claude_fleet.yaml`, so mind which is which:
@@ -129,8 +130,9 @@ Both files are called `claude_fleet.yaml`, so mind which is which:
 - `homeassistant/packages/claude_fleet.yaml` goes in `/config/packages/`.
 - `homeassistant/dashboards/claude_fleet.yaml` goes in `/config/dashboards/`.
 - `homeassistant/www/claude-fleet-flow-card.js` goes in `/config/www/` (create the folder if
-  it isn't there). It is the animated stream on the Sessions tab; the `frontend:` lines above
-  are what load it.
+  it isn't there). It holds the dashboard's own cards: the animated stream and the timeline on
+  the Sessions tab, and tokens by project on the Tokens tab. The `frontend:` lines above are
+  what load it.
 
 Install **History explorer card** via HACS first, or every chart renders as an error. Then
 **restart**: a new package and a new dashboard both need one.

@@ -21,6 +21,24 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+**To update:** copy the package, the dashboard and `www/claude-fleet-flow-card.js` again, and
+change the `extra_module_url` line in `configuration.yaml` to
+`/local/claude-fleet-flow-card.js?v=4`, or browsers keep the old file. Update the hook too
+(below): the cards work without it, but projects worked on in removed worktrees are misnamed.
+
+- **A timeline of the day** on the Sessions tab: one lane per session, blue while it worked,
+  amber while it waited on you, green while idle, with how long sessions waited on you in all
+  and the longest wait. Sessions the cleanup already removed stay on it.
+- **Tokens by project** on the Tokens tab: where today's tokens went, by the repository each
+  session worked in (or its folder, when it is not in one), and the same day by day. Switches
+  between all tokens and the tokens written. Everything in one project reads as a sentence,
+  not a chart of one colour. Each day is saved just before midnight, so the trend starts on
+  the first night after you update.
+- **Hook: a session keeps its project when its worktree is removed.** The project was worked
+  out again from the folder on every event, and once a worktree was removed after its merge,
+  that folder was all there was: a session that had worked in `~/shop-42` reported the
+  project `shop-42` instead of `shop`. A folder that no longer exists now keeps the name it had.
+
 - **Today's totals no longer drop when a session is archived twice.** A session that idled
   out, was resumed and idled out again fell back to its first archived counts, so tokens,
   prompts, PRs and wait minutes for the day dropped, then jumped back when it resumed, and
