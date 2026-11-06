@@ -50,6 +50,10 @@ change the `extra_module_url` line in `configuration.yaml` to
   billion tokens as 2.2). They now read unavailable instead, which the chart skips. Bars
   already drawn twice correct themselves once Home Assistant's 10 days of raw history have
   passed.
+- **A gauge for a model with its own weekly limit** (on Max, Fable): how much of that limit
+  is used, coloured by pace like the plan gauges, with its share of the whole week, and a
+  chart of it on the Tokens tab. It counts the model everywhere, the Claude app included.
+  Needs Clawdmeter 0.1 or later; without such a limit nothing appears.
 
 ## Hook 0.1.15 (2026-11-03)
 

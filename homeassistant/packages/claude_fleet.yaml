@@ -120,6 +120,13 @@ template:
             {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_usage$') | list + ['']) | first }}
           weekly_reset: >
             {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_reset$') | list + ['']) | first }}
+          # OPTIONAL, and not part of the health above: a weekly limit of ONE model
+          # (on Max, Fable has its own, up to half the week). Clawdmeter 0.1+ has
+          # it as "Weekly model usage", with the model, its share of the week and
+          # its reset as attributes. Another integration: its entity id here; the
+          # gauge then shows the number alone, named "Model". None: hidden.
+          model_usage: >
+            {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_model_usage$') | list + ['']) | first }}
           minutes_since_report: >
             {%- set src = this.attributes.get('session_usage', '') if this is defined and this.attributes is defined else '' %}
             {%- set st = (expand(src) | list + [none]) | first if src else none %}
@@ -176,7 +183,68 @@ template:
           {%- set raw = states(src) if src else '' %}
           {%- if src and raw in ['unknown', 'unavailable'] and this is defined and this.state not in ['unknown', 'unavailable', ''] %}{{ this.state }}
           {%- else %}{{ as_datetime(raw) if src else none }}{% endif %}
+      # The one model with its own weekly limit, in % of THAT limit. Named after
+      # the model, so the gauge says "Fable weekly", not a generic word.
+      - name: "{{ (state_attr(state_attr('sensor.claude_plan_source', 'model_usage') or '', 'model') or 'Model') ~ ' weekly' }}"
+        unique_id: claude_plan_model_usage
+        default_entity_id: sensor.claude_plan_model_usage
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:chip
+        state: >
+          {%- set src = state_attr('sensor.claude_plan_source', 'model_usage') or '' %}
+          {%- set raw = states(src) if src else '' %}
+          {%- if src and raw in ['unknown', 'unavailable'] and this is defined and this.state not in ['unknown', 'unavailable', ''] %}{{ this.state }}
+          {%- else %}
+          {%- set v = raw | float(none) if src else none %}
+          {{ (v | int) if v is not none and v == (v | int) else v }}
+          {%- endif %}
+        attributes:
+          model: >
+            {%- set src = state_attr('sensor.claude_plan_source', 'model_usage') or '' %}
+            {{ (state_attr(src, 'model') if src else none) or none }}
+          # the most of the WEEKLY limit this model may use (Fable on Max: 50)
+          allowance_percent_of_weekly: >
+            {%- set src = state_attr('sensor.claude_plan_source', 'model_usage') or '' %}
+            {{ (state_attr(src, 'allowance_percent_of_weekly') if src else none) | float(none) }}
+          resets_at: >
+            {%- set src = state_attr('sensor.claude_plan_source', 'model_usage') or '' %}
+            {%- set r = state_attr(src, 'resets_at') if src else none %}
+            {{ as_datetime(r) if r else none }}
+      # The same usage in points of the WHOLE weekly limit, the unit of "Weekly
+      # limit used per day", so the chart can put the model's bar beside the
+      # total. Unknown without the allowance: no guessing the conversion.
+      - name: "{{ (state_attr(state_attr('sensor.claude_plan_source', 'model_usage') or '', 'model') or 'Model') ~ ' share of the week' }}"
+        unique_id: claude_plan_model_share
+        default_entity_id: sensor.claude_plan_model_share
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:chip
+        state: >
+          {%- set u = states('sensor.claude_plan_model_usage') | float(none) %}
+          {%- set a = state_attr('sensor.claude_plan_model_usage', 'allowance_percent_of_weekly') | float(none) %}
+          {{ (u * a / 100) | round(1) if u is not none and a is not none else none }}
   # ==================================================== end of source block
+
+  # Where the model's own weekly limit is HEADED, for the gauge's colour: the
+  # weekly pace's rule without its heavy-day test, which needs a per-day log
+  # of the model this does not keep. Rounded integers, as the weekly's.
+  - sensor:
+      - name: Claude model pace
+        unique_id: claude_model_pace
+        icon: mdi:speedometer-slow
+        state: >
+          {%- set use = states('sensor.claude_plan_model_usage') | float(-1) %}
+          {%- set r = state_attr('sensor.claude_plan_model_usage', 'resets_at') or states('sensor.claude_plan_weekly_reset') %}
+          {%- set r = as_datetime(r) if r not in [none, '', 'unknown', 'unavailable'] else none %}
+          {%- if use < 0 or not r %}unknown
+          {%- else %}
+          {%- set el = 100 * (1 - ((as_timestamp(r) - as_timestamp(now())) / (7 * 86400))) %}
+          {%- set over = (use | round(0) | int) - (el | round(0) | int) %}
+          {%- if use >= 100 or (over >= 10 and el >= 10) %}over
+          {%- elif over > 2 or use >= 90 %}tight
+          {%- else %}ok{% endif %}
+          {%- endif %}
 
   # ---- setup ---------------------------------------------------------------------
   # On while something REQUIRED is missing: no session has ever reported, or a

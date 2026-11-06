@@ -31,6 +31,13 @@ health, and the Sessions tab warns when it stops reporting. The burn rate, time 
 today's peak are derived from those four, so every source gets the same arithmetic. Without
 one, the plan cards hide themselves.
 
+**A model with its own weekly limit.** Some plans cap one model separately, on top of the
+plan's weekly limit (on Max, Fable may use up to half the week). Clawdmeter 0.1 or later
+reports it as "Weekly model usage", and the Sessions tab then adds a gauge for it under the
+plan gauges, named after the model, and the Tokens tab a chart of it. It counts that model
+everywhere, the Claude app included, as a percentage: nothing reports the app's tokens. For
+another integration, set `model_usage` in the same block. No such limit, no cards.
+
 ## Alerts
 
 Claude Fleet sends nothing to your phone by itself: what deserves a buzz, and where, is

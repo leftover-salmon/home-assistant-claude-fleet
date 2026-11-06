@@ -515,6 +515,7 @@ SESSION_ELAPSED_MIN = 170
 SESSION_RATE = 0.19
 WEEK_ELAPSED_H = 100
 WEEKLY_NOW = 66
+MODEL_NOW = 30          # % of one model's own weekly limit (the plan helper above)
 
 
 def session_usage_at(t, anchor):
@@ -905,6 +906,10 @@ def cmd_plan():
         ("Demo plan weekly reset", None, "timestamp", None,
          "{%% set a = as_timestamp('%s') %%}{%% set n = ((as_timestamp(now()) - a) // 604800) + 1 %%}"
          "{{ (a + n * 604800) | as_datetime }}" % wa),
+        # one model's own weekly limit (Clawdmeter's "Weekly model usage"). A UI
+        # helper has no attributes, so no model name or allowance: the package
+        # must still show the number, named "Model", and leave the share unknown.
+        ("Demo plan weekly model usage", "%", None, "measurement", "{{ %s }}" % MODEL_NOW),
     ]
     for name, unit, dc, sc, tpl in helpers:
         st, r = ha.http("POST", "/api/config/config_entries/flow", {"handler": "template"}, token=tok)
@@ -920,8 +925,8 @@ def cmd_plan():
         if r.get("type") != "create_entry":
             ha.fail("template helper %s: %s" % (name, r))
         ha.ws([{"type": "config_entries/update", "entry_id": r["result"]["entry_id"], "title": "clawdmeter"}])
-    print("  ok    plan source: 4 template helpers titled 'clawdmeter' (session %s%%, weekly %s%%)"
-          % (p["session_now"], p["weekly_now"]))
+    print("  ok    plan source: 5 template helpers titled 'clawdmeter' (session %s%%, weekly %s%%, model %s%%)"
+          % (p["session_now"], p["weekly_now"], MODEL_NOW))
 
 
 # =============================================================== sessions

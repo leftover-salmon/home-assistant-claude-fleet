@@ -485,6 +485,150 @@ views:
                   - *weekly_gauges
               - *plan_text
 
+          # ------------------------------------------- one model's weekly limit
+          # Some plans give one model a weekly limit of its own on top of the plan's
+          # (on Max, Fable: up to half the week). Its own row, under the plan row and
+          # only when the plan integration reports such a limit: squeezed into the
+          # row above, every gauge would shrink for the many who have none. The
+          # gauge is named by the sensor, after the model; coloured by
+          # sensor.claude_model_pace, three copies like the gauges above.
+          - type: grid
+            columns: 1
+            square: false
+            grid_options: { columns: 8 }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_model_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_model_usage
+                state_not: unavailable
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            cards:
+              - &model_gauges
+                type: grid
+                columns: 1
+                square: false
+                cards:
+                  - type: gauge
+                    entity: sensor.claude_plan_model_usage
+                    min: 0
+                    max: 100
+                    needle: false
+                    severity: { green: 0, yellow: 1000, red: 1000 }
+                    visibility:
+                      - condition: state
+                        entity: sensor.claude_plan_model_usage
+                        state_not: unknown
+                      - condition: state
+                        entity: sensor.claude_plan_model_usage
+                        state_not: unavailable
+                      - condition: state
+                        entity: sensor.claude_model_pace
+                        state_not: tight
+                      - condition: state
+                        entity: sensor.claude_model_pace
+                        state_not: over
+                  - type: gauge
+                    entity: sensor.claude_plan_model_usage
+                    min: 0
+                    max: 100
+                    needle: false
+                    severity: { green: 0, yellow: 0, red: 1000 }
+                    visibility:
+                      - condition: state
+                        entity: sensor.claude_plan_model_usage
+                        state_not: unknown
+                      - condition: state
+                        entity: sensor.claude_plan_model_usage
+                        state_not: unavailable
+                      - condition: state
+                        entity: sensor.claude_model_pace
+                        state: tight
+                  - type: gauge
+                    entity: sensor.claude_plan_model_usage
+                    min: 0
+                    max: 100
+                    needle: false
+                    severity: { green: 0, yellow: 0, red: 0 }
+                    visibility:
+                      - condition: state
+                        entity: sensor.claude_plan_model_usage
+                        state_not: unknown
+                      - condition: state
+                        entity: sensor.claude_plan_model_usage
+                        state_not: unavailable
+                      - condition: state
+                        entity: sensor.claude_model_pace
+                        state: over
+          - type: grid
+            columns: 1
+            square: false
+            grid_options: { columns: 40 }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_model_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_model_usage
+                state_not: unavailable
+              - condition: screen
+                media_query: "(min-width: 768px)"
+            cards:
+              - &model_text
+                type: markdown
+                content: |
+                  {%- set u = states('sensor.claude_plan_model_usage') | float(-1) %}
+                  {%- set m = state_attr('sensor.claude_plan_model_usage', 'model') or 'This model' %}
+                  {%- set a = state_attr('sensor.claude_plan_model_usage', 'allowance_percent_of_weekly') | float(-1) %}
+                  {%- set sh = states('sensor.claude_plan_model_share') | float(-1) %}
+                  {%- set r = state_attr('sensor.claude_plan_model_usage', 'resets_at') or states('sensor.claude_plan_weekly_reset') %}
+                  {%- set r = as_datetime(r) if r not in [none, '', 'unknown', 'unavailable'] else none %}
+                  ### {{ m }}, this week
+
+                  {% if u >= 0 -%}
+                  {#- the same rounded integers as the pace sensor, so the words and
+                      the gauge's colour cannot disagree -#}
+                  {%- set ui = u | round(0) | int %}
+                  **{{ ui }}%** of its own weekly limit
+                  {%- if r %}
+                  {%- set el = (100 * (1 - ((as_timestamp(r) - as_timestamp(now())) / (7 * 86400)))) | round(0) | int %}
+                  {%- set d = el - ui %} against {{ el }}% of the week
+                  {%- if d > 2 %} — {{ d }} under pace
+                  {%- elif d < -2 %} — **{{ 0 - d }} over pace**
+                  {%- else %} — on pace{% endif %} · resets **{{ as_local(r).strftime('%a %-I:%M %p') }}**
+                  {%- endif %}
+                  {%- if sh >= 0 and a > 0 %}
+
+                  That is **{{ sh | round(1) }}%** of your whole weekly limit; {{ m }} may use up to {{ a | round(0) | int }}% of it.
+                  {%- endif %}
+                  {%- endif %}
+
+                  <details><summary>What is this?</summary><ul><li>Some plans give one model a <b>weekly limit of its own</b>, on top of the plan's. This is how much of that limit is used.</li><li>It counts the model <b>everywhere</b>: Claude Code, the Claude app and claude.ai. Nothing reports the app's tokens, so this percentage is the only measure of it.</li><li><b>Pace and colour</b> work like the Weekly gauge: yellow at 3 or more points over pace, red at 10 or more, or at 100%.</li></ul></details>
+
+          # The same two cards on a phone, side by side.
+          - type: grid
+            columns: 1
+            square: false
+            grid_options: { columns: full }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_model_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_model_usage
+                state_not: unavailable
+              - condition: screen
+                media_query: "(max-width: 767px)"
+            cards:
+              - type: grid
+                columns: 2
+                square: false
+                cards:
+                  - *model_gauges
+                  - *model_text
+
           # ---------------------------------------------------------- sessions
           # Ten columns on a wide screen; a phone gets the compact card below instead.
           - type: markdown
@@ -1386,6 +1530,45 @@ views:
                   - entity: sensor.claude_plan_weekly_usage
                     name: Weekly points used
                     color: "#199e70"
+
+          # ------------------------------------- one model's weekly limit, over time
+          # Its own card, only when the plan integration reports such a limit (see
+          # the model row under the plan gauges): added to the charts above, it was
+          # an empty series in the legend for everyone without one. Two graphs: its
+          # own limit as a line, like Plan usage, and per day in points of the WHOLE
+          # weekly limit (its share), the unit of "Weekly limit used per day", so
+          # the two cards' bars compare. Series are named by the sensors, after
+          # the model.
+          - type: custom:history-explorer-card
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_model_usage
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_model_usage
+                state_not: unavailable
+            grid_options: { columns: full }
+            header: "Per-model weekly limit"
+            defaultTimeRange: 3w
+            uiLayout:
+              toolbar: top
+              selector: hide
+            statistics:
+              enabled: true
+              mode: max
+              period: hour
+            graphs:
+              - type: line
+                options: { ymin: 0, ymax: 100 }
+                entities:
+                  - entity: sensor.claude_plan_model_usage
+                    lineMode: stepped
+                    color: "#e5a039"
+              - type: bar
+                options: { interval: daily }
+                entities:
+                  - entity: sensor.claude_plan_model_share
+                    color: "#e5a039"
 
   # ============================================================== setup view
   # What is working and what is next. Reference, not something to watch, so it
