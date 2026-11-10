@@ -38,10 +38,10 @@ plan gauges, named after the model, and the Tokens tab a chart of it. It counts 
 everywhere, the Claude app included, as a percentage: nothing reports the app's tokens. For
 another integration, set `model_usage` in the same block. No such limit, no cards.
 
-**Where the week went.** Clawdmeter 0.2.2 or later also reports the week's usage by surface:
+**Usage by surface.** Clawdmeter 0.2.2 or later also reports the week's usage by surface:
 Claude Code, chat, Cowork and other, as shares that add up to 100. The Sessions tab then shows
-each as a bar, with that share in points of the weekly limit, and names the surfaces with
-nothing this week. It is the one view of your Claude app and claude.ai use, which report no
+a row for each, zeros included: its share, and that share as % of the weekly limit, beside
+the one-model row. It is the one view of your Claude app and claude.ai use, which report no
 tokens. For another integration, list its entity ids in `surface_shares`, each named
 `..._weekly_<surface>_share`. None reported, no card.
 

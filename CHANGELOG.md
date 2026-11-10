@@ -54,8 +54,8 @@ change the `extra_module_url` line in `configuration.yaml` to
   is used, coloured by pace like the plan gauges, with its share of the whole week, and a
   chart of it on the Tokens tab. It counts the model everywhere, the Claude app included.
   Needs Clawdmeter 0.1 or later; without such a limit nothing appears.
-- **Where this week went**, on the Sessions tab: the week's usage by surface (Claude Code,
-  chat, Cowork, other), each as its share of the week and in points of the weekly limit. Use
+- **Usage by surface**, on the Sessions tab beside the one-model row: the week's usage by surface (Claude Code,
+  chat, Cowork, other), each as its share of the week and as % of the weekly limit, zeros included. Use
   in the Claude apps and on claude.ai shows here and nowhere else, since they report no
   tokens. Needs Clawdmeter 0.2.2 or later; without it the card is hidden.
 
