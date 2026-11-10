@@ -656,10 +656,10 @@ views:
               Each surface's share of this week's use.
               {%- endif %}
 
-              | Surface | Share | {{ 'Points' if w >= 0 else '' }} | |
-              |:--|--:|--:|:--|
+              | Surface | Share | {{ 'Points' if w >= 0 else '' }} |
+              |:--|--:|--:|
               {% for r in rows if r.share > 0 -%}
-              | **{{ names.get(r.surface, r.surface | replace('_', ' ') | capitalize) }}** | {{ r.share | round(0) | int }}% | {{ r.points if r.points is not none and w >= 0 else '' }} | {{ '█' * ([(r.share / 10) | round(0) | int, 1] | max) }} |
+              | **{{ names.get(r.surface, r.surface | replace('_', ' ') | capitalize) }}** | {{ r.share | round(0) | int }}% | {{ r.points if r.points is not none and w >= 0 else '' }} |
               {% endfor %}
               {%- set ns = namespace(idle=[]) %}
               {%- for r in rows if r.share <= 0 %}{% set ns.idle = ns.idle + [names.get(r.surface, r.surface | replace('_', ' ') | capitalize)] %}{% endfor %}
