@@ -547,6 +547,15 @@ def machine_tokens_entity(machine):
 
 # Who wrote how much of a past day's output, for the by-machine chart's history.
 MACHINE_SHARE = {"studio": 0.49, "mini": 0.31, "laptop": 0.20}
+# Output tokens a minute each machine is writing as the scenario starts. The
+# hook publishes the day's whole count when HA starts; with nothing recorded
+# for today before it, the flow card would read that as five minutes' writing
+# (190,000 a minute, "in flood"). So each counter gets one recorded reading
+# just before, this many minutes' worth of writing short of the live figure:
+# about 10,000 a minute in all, which the card calls running fast. Real
+# sessions write a few thousand a minute each at most.
+MACHINE_RATE = {"studio": 5200, "mini": 3300, "laptop": 2100}
+RATE_MINUTES = 5.5   # the flow card's window (WINDOW_S, 330 s)
 for _m in MACHINE_SHARE:
     ENTITIES[machine_tokens_entity(_m)] = "tokens"
 
@@ -635,8 +644,9 @@ def cmd_prepare():
             lf = live_fam.setdefault(f, {"total": 0, "output": 0})
             lf["total"] += v["total"]
             lf["output"] += v["output"]
-        bm = by_machine.setdefault(s["machine"], {"new": 0})
+        bm = by_machine.setdefault(s["machine"], {"new": 0, "output": 0})
         bm["new"] += tot["cache_write"] + tot["input"]
+        bm["output"] += tot["output"]
         if s["final"] != "ended":
             live["running"] += 1
         plan.append({"sid": s["sid"], "key": s["key"], "machine": s["machine"],
@@ -646,6 +656,7 @@ def cmd_prepare():
                      "last_prompt": s["asks"][-1], "label": s["label"], "tokens": tot, "repo": s["repo"],
                      "edit": os.path.join(s["repo_dir"], "src", "index.ts")})
     live["fam"] = live_fam
+    live["machine_out"] = {m: v["output"] for m, v in by_machine.items()}
     tot_all = {"cache_read": 0, "in": 0}
     for p in plan:
         k = p["tokens"]
@@ -844,6 +855,13 @@ def cmd_inject():
             # today included: today's bar is the rise from there to the live figure
             days.add(prepared.date())
             pts += [(dt.datetime.combine(d, dt.time(0, 0, 30), TZ), 0) for d in days]
+            m = next((m for m in MACHINE_SHARE if eid == machine_tokens_entity(m)), None)
+            out = (live.get("machine_out") or {}).get(m)
+            if out:   # the reading the flow card's rate starts from (MACHINE_RATE)
+                # ten minutes back: older than the card's window when the
+                # screenshots are taken, so it is the count the window opens on
+                pts.append((prepared - dt.timedelta(minutes=10),
+                            max(0, round(out - MACHINE_RATE.get(m, 0) * RATE_MINUTES))))
             pts.sort()
         prev = None
         for t, v in pts:
@@ -967,13 +985,22 @@ def patch_state(p, state, since_min, **kw):
 
 
 def cmd_run():
-    """`run` plays every session but the ended one; `run ended` plays that one
-    alone, last, so it is still inside the cleanup's 10-minute grace when the
-    screenshots are taken."""
+    """`run` plays every session, the one that ends only as far as its last
+    answer; `run ended` ends that one, last, so it is still inside the
+    cleanup's 10-minute grace when the screenshots are taken. Its tokens are
+    counted in `run`, with everyone else's, so its computer's counter does not
+    jump in the minute before the screenshots (the flow card would read that
+    as a flood)."""
     only_ended = sys.argv[2:] == ["ended"]
-    plan = [p for p in load("sessions.json") if (p["final"] == "ended") == only_ended]
+    plan = [p for p in load("sessions.json") if not only_ended or p["final"] == "ended"]
     stale_done = None
     for p in plan:
+        if only_ended:
+            patch_state(p, "idle", p["for_min"])
+            ev(p, "Stop", {"stop_hook_active": False})
+            ev(p, "SessionEnd", {"reason": "prompt_input_exit"})
+            print("  ok    %-8s %-12s %s" % (p["machine"], "ended", p["label"]))
+            continue
         ev(p, "SessionStart", {"source": "startup"})
         ev(p, "UserPromptSubmit", {"prompt": p["last_prompt"]})
         ev(p, "Stop", {"stop_hook_active": False})       # tokens, and the summary
@@ -993,10 +1020,8 @@ def cmd_run():
         elif p["final"] == "idle":
             patch_state(p, "idle", p["for_min"])
             ev(p, "Stop", {"stop_hook_active": False})
-        elif p["final"] == "ended":
+        elif p["final"] == "ended":   # ended by `run ended`, last
             patch_state(p, "idle", p["for_min"])
-            ev(p, "Stop", {"stop_hook_active": False})
-            ev(p, "SessionEnd", {"reason": "prompt_input_exit"})
         if p["stale"]:
             stale_done = time.time()
         print("  ok    %-8s %-12s %s" % (p["machine"], p["final"] + (" (stale soon)" if p["stale"] else ""), p["label"]))
