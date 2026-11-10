@@ -127,6 +127,13 @@ template:
           # gauge then shows the number alone, named "Model". None: hidden.
           model_usage: >
             {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_model_usage$') | list + ['']) | first }}
+          # OPTIONAL too: where the week's usage went, one share sensor per surface
+          # (Claude Code, chat, Cowork, other: Clawdmeter 0.2.2+, shares adding up
+          # to 100). Every one found, so a surface added later shows without a
+          # change here. Another integration: list its entity ids, each named
+          # ..._weekly_<surface>_share. None: the card is hidden.
+          surface_shares: >
+            {{ integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_.+_share$') | list }}
           minutes_since_report: >
             {%- set src = this.attributes.get('session_usage', '') if this is defined and this.attributes is defined else '' %}
             {%- set st = (expand(src) | list + [none]) | first if src else none %}
@@ -224,6 +231,33 @@ template:
           {%- set u = states('sensor.claude_plan_model_usage') | float(none) %}
           {%- set a = state_attr('sensor.claude_plan_model_usage', 'allowance_percent_of_weekly') | float(none) %}
           {{ (u * a / 100) | round(1) if u is not none and a is not none else none }}
+      # Where the week went: how many surfaces report, and per surface its share
+      # of the week's usage (they add up to 100) and that share in points of the
+      # whole weekly limit (share x the Weekly gauge; none without it), largest
+      # first.
+      # The surface is the middle of the source's entity id: _weekly_<it>_share.
+      - name: Claude week by surface
+        unique_id: claude_plan_surfaces
+        default_entity_id: sensor.claude_plan_surfaces
+        icon: mdi:chart-pie
+        state: >
+          {%- set ns = namespace(n=0) %}
+          {%- for e in state_attr('sensor.claude_plan_source', 'surface_shares') or [] %}
+          {%- if states(e) | float(none) is not none %}{% set ns.n = ns.n + 1 %}{% endif %}
+          {%- endfor %}
+          {{ ns.n if ns.n else none }}
+        attributes:
+          surfaces: >
+            {%- set w = states('sensor.claude_plan_weekly_usage') | float(none) %}
+            {%- set ns = namespace(rows=[]) %}
+            {%- for e in state_attr('sensor.claude_plan_source', 'surface_shares') or [] %}
+            {%- set v = states(e) | float(none) %}
+            {%- if v is not none %}
+            {%- set ns.rows = ns.rows + [{'surface': e.split('_weekly_')[-1][:-6], 'share': v | round(1),
+                                          'points': (v * w / 100) | round(1) if w is not none else none}] %}
+            {%- endif %}
+            {%- endfor %}
+            {{ ns.rows | sort(attribute='share', reverse=true) }}
   # ==================================================== end of source block
 
   # Where the model's own weekly limit is HEADED, for the gauge's colour: the

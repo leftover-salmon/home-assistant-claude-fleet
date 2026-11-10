@@ -516,6 +516,9 @@ SESSION_RATE = 0.19
 WEEK_ELAPSED_H = 100
 WEEKLY_NOW = 66
 MODEL_NOW = 30          # % of one model's own weekly limit (the plan helper above)
+# the week by surface (Clawdmeter 0.2.2's shares, adding up to 100); "other" at 0
+# so the card's line for surfaces with nothing this week has something to name
+SURFACES = {"claude_code": 70, "cowork": 20, "chat": 10, "other": 0}
 
 
 def session_usage_at(t, anchor):
@@ -910,6 +913,10 @@ def cmd_plan():
         # helper has no attributes, so no model name or allowance: the package
         # must still show the number, named "Model", and leave the share unknown.
         ("Demo plan weekly model usage", "%", None, "measurement", "{{ %s }}" % MODEL_NOW),
+    ] + [
+        # one share per surface, found by the suffix _weekly_<surface>_share
+        ("Demo plan weekly %s share" % k.replace("_", " "), "%", None, "measurement", "{{ %s }}" % v)
+        for k, v in SURFACES.items()
     ]
     for name, unit, dc, sc, tpl in helpers:
         st, r = ha.http("POST", "/api/config/config_entries/flow", {"handler": "template"}, token=tok)
@@ -925,8 +932,8 @@ def cmd_plan():
         if r.get("type") != "create_entry":
             ha.fail("template helper %s: %s" % (name, r))
         ha.ws([{"type": "config_entries/update", "entry_id": r["result"]["entry_id"], "title": "clawdmeter"}])
-    print("  ok    plan source: 5 template helpers titled 'clawdmeter' (session %s%%, weekly %s%%, model %s%%)"
-          % (p["session_now"], p["weekly_now"], MODEL_NOW))
+    print("  ok    plan source: %d template helpers titled 'clawdmeter' (session %s%%, weekly %s%%, model %s%%, %d surfaces)"
+          % (len(helpers), p["session_now"], p["weekly_now"], MODEL_NOW, len(SURFACES)))
 
 
 # =============================================================== sessions

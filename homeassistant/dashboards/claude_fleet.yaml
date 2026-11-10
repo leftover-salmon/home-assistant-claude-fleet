@@ -629,6 +629,45 @@ views:
                   - *model_gauges
                   - *model_text
 
+          # ------------------------------------------- where the week went
+          # The week's usage by surface (Claude Code, chat, Cowork, other), from
+          # sensor.claude_plan_surfaces: the one place use outside Claude Code
+          # shows at all, since the Claude apps report no tokens. Each surface
+          # gets a row: its share, that share in points of the weekly limit, a bar;
+          # surfaces at 0 are named on one line. Hidden when nothing reports it.
+          - type: markdown
+            grid_options: { columns: full }
+            visibility:
+              - condition: state
+                entity: sensor.claude_plan_surfaces
+                state_not: unknown
+              - condition: state
+                entity: sensor.claude_plan_surfaces
+                state_not: unavailable
+            content: |
+              {%- set names = {'claude_code': 'Claude Code', 'chat': 'Chat', 'cowork': 'Cowork', 'other': 'Other'} %}
+              {%- set rows = state_attr('sensor.claude_plan_surfaces', 'surfaces') or [] %}
+              {%- set w = states('sensor.claude_plan_weekly_usage') | float(-1) %}
+              ### Where this week went
+
+              {% if w >= 0 -%}
+              **{{ w | round(0) | int }}%** of the weekly limit used so far, split by where it was used.
+              {%- else -%}
+              Each surface's share of this week's use.
+              {%- endif %}
+
+              | Surface | Share | {{ 'Points' if w >= 0 else '' }} | |
+              |:--|--:|--:|:--|
+              {% for r in rows if r.share > 0 -%}
+              | **{{ names.get(r.surface, r.surface | replace('_', ' ') | capitalize) }}** | {{ r.share | round(0) | int }}% | {{ r.points if r.points is not none and w >= 0 else '' }} | {{ '█' * ([(r.share / 10) | round(0) | int, 1] | max) }} |
+              {% endfor %}
+              {%- set ns = namespace(idle=[]) %}
+              {%- for r in rows if r.share <= 0 %}{% set ns.idle = ns.idle + [names.get(r.surface, r.surface | replace('_', ' ') | capitalize)] %}{% endfor %}
+              {%- if ns.idle %}{{ '\n' }}
+              None this week: {{ ns.idle | join(', ') }}.
+              {% endif %}
+              <details><summary>What is this?</summary><ul><li>Where this week's usage happened, as <b>shares that add up to 100</b>, not percentages of a limit.</li><li><b>Chat</b> and <b>Cowork</b> are the Claude apps and claude.ai: the only measure of them on this dashboard, since they report no tokens.</li><li><b>Points</b> turn a share into points of the Weekly gauge: share × weekly used, so they add up to it.</li></ul></details>
+
           # ---------------------------------------------------------- sessions
           # Ten columns on a wide screen; a phone gets the compact card below instead.
           - type: markdown

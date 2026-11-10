@@ -41,6 +41,7 @@ KEY_ENTITIES = [
     "sensor.claude_plan_usage_rate", "sensor.claude_plan_session_resets_in", "sensor.claude_session_pace",
     "sensor.claude_weekly_pace", "sensor.claude_fleet_records", "sensor.claude_archived_today",
     "sensor.claude_plan_model_usage", "sensor.claude_plan_model_share", "sensor.claude_model_pace",
+    "sensor.claude_plan_surfaces",
     "sensor.claude_weekly_points_by_day", "sensor.claude_rtk_saved_today", "sensor.claude_rtk_share_today",
     "sensor.claude_tokens_today_opus", "sensor.claude_tokens_today_sonnet", "sensor.claude_tokens_today_haiku",
     "sensor.claude_output_tokens_today_opus", "sensor.claude_output_tokens_today",
@@ -415,6 +416,35 @@ def check_headless(states, rendered, exp):
 # demo/gen.py's MODEL_NOW: the demo's one model with a weekly limit of its own.
 # Its helper has no attributes, so no model name and no allowance.
 MODEL_NOW = 30
+# demo/gen.py's SURFACES: the week by surface, shares adding up to 100.
+SURFACES = {"claude_code": 70, "cowork": 20, "chat": 10, "other": 0}
+
+
+def check_surfaces(states):
+    """Every surface found by its suffix, largest share first, each share turned
+    into points of the weekly limit with the Weekly gauge's number."""
+    by = {s["entity_id"]: s for s in states}
+    src = by.get("sensor.claude_plan_surfaces")
+    if src is None:
+        return ["sensor.claude_plan_surfaces missing"]
+    out = []
+    if src["state"] != str(len(SURFACES)):
+        out.append("sensor.claude_plan_surfaces = %s, expected %d" % (src["state"], len(SURFACES)))
+    rows = src["attributes"].get("surfaces") or []
+    want = sorted(SURFACES, key=lambda k: -SURFACES[k])
+    if [r.get("surface") for r in rows] != want:
+        out.append("surfaces in order %s, expected %s" % ([r.get("surface") for r in rows], want))
+    try:
+        w = float(by["sensor.claude_plan_weekly_usage"]["state"])
+    except (KeyError, ValueError):
+        return out + ["no weekly usage to turn shares into points"]
+    for r in rows:
+        k = r.get("surface")
+        if k in SURFACES and r.get("share") != SURFACES[k]:
+            out.append("%s share %s, expected %s" % (k, r.get("share"), SURFACES[k]))
+        if k in SURFACES and (r.get("points") is None or abs(r["points"] - SURFACES[k] * w / 100) > 0.06):
+            out.append("%s points %s, expected %.1f (share x weekly %s)" % (k, r.get("points"), SURFACES[k] * w / 100, w))
+    return out
 
 
 def check_plan(states):
@@ -823,6 +853,10 @@ def _synthetic():
         fixed.setdefault("sensor.claude_extra_%d" % i, "0")
     states += [{"entity_id": k, "state": v, "attributes": {}} for k, v in fixed.items()]
     states = _set(states, "sensor.claude_plan_model_usage", friendly_name="Model weekly")
+    wk = float(next(x["state"] for x in states if x["entity_id"] == "sensor.claude_plan_weekly_usage"))
+    states = _set(states, "sensor.claude_plan_surfaces", str(len(SURFACES)), surfaces=[
+        {"surface": k, "share": v, "points": round(v * wk / 100, 1)}
+        for k, v in sorted(SURFACES.items(), key=lambda kv: -kv[1])])
     states += [{"entity_id": "sensor.claude_machine_%s_output_tokens" % m, "state": str(v),
                 "attributes": {"claude_machine_tokens": True, "machine": m}} for m, v in exp["by_machine"].items()]
     states = [s for s in states if s["entity_id"] not in ("sensor.claude_fleet_records",
@@ -993,6 +1027,15 @@ def self_test():
     expect("plan: a stale source fails", check_plan(_set(states, "sensor.claude_plan_source", "stale")), True)
     expect("plan: weekly pace ok fails", check_plan(_set(states, "sensor.claude_weekly_pace", "ok")), True)
     expect("plan: session pace unknown fails", check_plan(_set(states, "sensor.claude_session_pace", "unknown")), True)
+    rows = next(x for x in states if x["entity_id"] == "sensor.claude_plan_surfaces")["attributes"]["surfaces"]
+    expect("surfaces: four, in order, shares and points right passes", check_surfaces(states), False)
+    expect("surfaces: the sensor missing fails", check_surfaces(_drop(states, "sensor.claude_plan_surfaces")), True)
+    expect("surfaces: one not found (3 of 4) fails",
+           check_surfaces(_set(states, "sensor.claude_plan_surfaces", "3", surfaces=rows[:3])), True)
+    expect("surfaces: not largest first fails",
+           check_surfaces(_set(states, "sensor.claude_plan_surfaces", surfaces=rows[::-1])), True)
+    expect("surfaces: points not from the weekly fails",
+           check_surfaces(_set(_set(states, "sensor.claude_plan_weekly_usage", "50"), "sensor.claude_plan_surfaces")), True)
 
 
     # ---- update check
@@ -1229,6 +1272,7 @@ def live():
             break
         time.sleep(10)
     record("plan source ok, weekly pace tight, session pace ok; the model limit 30%, ok, no share", check_plan(s1))
+    record("the week by surface: 4 found, largest first, shares in points of the weekly", check_surfaces(s1))
 
     # ---- versions: the repo's files agree, and HA loaded the package's
     rv = read_repo_versions()
