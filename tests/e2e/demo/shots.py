@@ -117,10 +117,12 @@ async def main():
         await call("Page.navigate", {"url": BASE + "/manifest.json"})
         await pump(2)
         # the frontend's own storage: its tokens, the sidebar hidden, light theme
+        # (CF_SHOTS_DARK=1: dark, for screenshots to share)
+        dark = "true" if os.environ.get("CF_SHOTS_DARK") == "1" else "false"
         await evaluate("localStorage.setItem('hassTokens', JSON.stringify(%s));"
                        "localStorage.setItem('dockedSidebar', JSON.stringify('always_hidden'));"
-                       "localStorage.setItem('selectedTheme', JSON.stringify({theme: 'default', dark: false}));"
-                       % json.dumps(tokens()))
+                       "localStorage.setItem('selectedTheme', JSON.stringify({theme: 'default', dark: %s}));"
+                       % (json.dumps(tokens()), dark))
         for name, view, width, *rest in jobs:
             phone = bool(rest and rest[0] == "phone")
             w = int(width)
