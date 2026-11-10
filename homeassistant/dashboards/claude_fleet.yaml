@@ -601,7 +601,7 @@ views:
                   {%- endif %}
                   {%- if sh >= 0 and a > 0 %}
 
-                  That is **{{ sh | round(1) }}%** of your whole weekly limit; {{ m }} may use up to {{ a | round(0) | int }}% of it.
+                  That is **{{ sh | round(0) | int }}%** of your whole weekly limit; {{ m }} may use up to {{ a | round(0) | int }}% of it.
                   {%- endif %}
                   {%- endif %}
 
