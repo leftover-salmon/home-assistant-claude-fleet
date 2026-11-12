@@ -163,8 +163,15 @@ template:
         device_class: timestamp
         state: >
           {%- set src = state_attr('sensor.claude_plan_source', 'session_reset') or '' %}
+          {#- The source also goes unknown when the 5-hour window simply ENDS and no
+              new one has started (it opens on the next prompt). Holding the last value
+              is for a failed poll, so it lasts only while that time is still ahead:
+              a held reset in the past read "resets 4:50 AM, 0m away" all morning.
+              now() also makes this re-render each minute, so the hold expires on time. -#}
           {%- set raw = states(src) if src else '' %}
-          {%- if src and raw in ['unknown', 'unavailable'] and this is defined and this.state not in ['unknown', 'unavailable', ''] %}{{ this.state }}
+          {%- set held = as_datetime(this.state) if this is defined and this.state not in ['unknown', 'unavailable', ''] else none %}
+          {%- if src and raw in ['unknown', 'unavailable'] and held and held > now() %}{{ this.state }}
+          {%- elif src and raw in ['unknown', 'unavailable'] %}{{ none }}
           {%- else %}{{ as_datetime(raw) if src else none }}{% endif %}
       - name: Claude plan weekly usage
         unique_id: claude_plan_weekly_usage

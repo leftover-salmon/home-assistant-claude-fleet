@@ -408,6 +408,10 @@ views:
                   {%- else %} — on pace
                   {%- endif %}
                   {%- endif %}
+                  {%- elif use == 0 -%}
+                  {#- No reset time and nothing used: the last window ended and none is
+                      open. That is not a fault, so it is not worded as one. -#}
+                  **Session** — none open; the next 5 hours start with your next prompt
                   {%- else -%}
                   **Session** — reset time unavailable
                   {%- endif %}

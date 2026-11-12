@@ -281,3 +281,8 @@ They are here so they cost it once, and most of them apply well beyond this proj
   themselves, so every restart drew the day again on top of itself. PRs today had already hit
   this and been fixed for itself alone. A sensor derived from another's attribute says
   unavailable when that attribute is missing, never 0.
+- **"Keep the last value" needs to know what the value was for.** A source that blinks
+  unknown on a failed poll should not blank the gauges, so the package held its last value.
+  But the session reset also goes unknown when the 5-hour window simply ends, and a reset time
+  in the past held forever read "resets 4:50 AM, 0m away" at 8 in the morning. A held time
+  now lasts only while it is still in the future.

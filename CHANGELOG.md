@@ -50,6 +50,10 @@ change the `extra_module_url` line in `configuration.yaml` to
   billion tokens as 2.2). They now read unavailable instead, which the chart skips. Bars
   already drawn twice correct themselves once Home Assistant's 10 days of raw history have
   passed.
+- **An ended session window no longer reads "0m away".** When a 5-hour window ends and no new
+  one has started, the plan source has no reset time, and the package kept showing the last one:
+  "resets 4:50 AM, 0m away" for the rest of the morning. A reset time is now held only while it
+  is still ahead, and At this rate says no session is open.
 - **A gauge for a model with its own weekly limit** (on Max, Fable): how much of that limit
   is used, coloured by pace like the plan gauges, with its share of the whole week, and a
   chart of it on the Tokens tab. It counts the model everywhere, the Claude app included.
