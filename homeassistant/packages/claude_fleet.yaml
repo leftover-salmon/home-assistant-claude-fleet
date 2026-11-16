@@ -319,7 +319,7 @@ template:
       - name: Claude Fleet package version
         unique_id: claude_fleet_package_version
         icon: mdi:tag-outline
-        state: "0.6.0"
+        state: "0.7.0"
 
   # ---- derived from the four above --------------------------------------------
   - sensor:
