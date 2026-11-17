@@ -99,7 +99,15 @@ template:
         # the "sign in again" banner at once; Clawdmeter misses a poll now and
         # then and recovers by itself, so the banner mostly sent you checking a
         # sign-in that was fine. Until then this keeps saying what it said.
+        # now() is read on EVERY render of EVERY template here (the state and
+        # each attribute), before anything else. HA re-renders each template of
+        # an entity separately, and only for the entities and the clock IT read
+        # last time; integration_entities() is neither. Without it, attributes
+        # that found nothing at startup were never searched again, so a "none"
+        # stayed "none": an integration that failed to sign in when HA started,
+        # and was signed in again later, never came back until a reload.
         state: >
+          {%- set _minute = now() %}
           {%- set src = this.attributes.get('session_usage', '') if this is defined and this.attributes is defined else '' %}
           {%- set st = (expand(src) | list + [none]) | first if src else none %}
           {%- set prev = this.state if this is defined else '' %}
@@ -113,12 +121,16 @@ template:
           {%- else %}ok{% endif %}
         attributes:
           session_usage: >
+            {%- set _minute = now() %}
             {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_session_usage$') | list + ['']) | first }}
           session_reset: >
+            {%- set _minute = now() %}
             {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_session_reset$') | list + ['']) | first }}
           weekly_usage: >
+            {%- set _minute = now() %}
             {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_usage$') | list + ['']) | first }}
           weekly_reset: >
+            {%- set _minute = now() %}
             {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_reset$') | list + ['']) | first }}
           # OPTIONAL, and not part of the health above: a weekly limit of ONE model
           # (on Max, Fable has its own, up to half the week). Clawdmeter 0.1+ has
@@ -126,6 +138,7 @@ template:
           # its reset as attributes. Another integration: its entity id here; the
           # gauge then shows the number alone, named "Model". None: hidden.
           model_usage: >
+            {%- set _minute = now() %}
             {{ (integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_model_usage$') | list + ['']) | first }}
           # OPTIONAL too: where the week's usage went, one share sensor per surface
           # (Claude Code, chat, Cowork, other: Clawdmeter 0.2.2+, shares adding up
@@ -133,6 +146,7 @@ template:
           # change here. Another integration: list its entity ids, each named
           # ..._weekly_<surface>_share. None: the card is hidden.
           surface_shares: >
+            {%- set _minute = now() %}
             {{ integration_entities('clawdmeter') | select('match', '^sensor\\..*_weekly_.+_share$') | list }}
           minutes_since_report: >
             {%- set src = this.attributes.get('session_usage', '') if this is defined and this.attributes is defined else '' %}
@@ -319,7 +333,7 @@ template:
       - name: Claude Fleet package version
         unique_id: claude_fleet_package_version
         icon: mdi:tag-outline
-        state: "0.7.0"
+        state: "0.7.1"
 
   # ---- derived from the four above --------------------------------------------
   - sensor:

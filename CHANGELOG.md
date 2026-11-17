@@ -21,6 +21,18 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+## Home Assistant files 0.7.1 (2026-11-17)
+
+**To update:** copy `homeassistant/packages/claude_fleet.yaml` and
+`homeassistant/dashboards/claude_fleet.yaml` again, then restart Home Assistant (or reload
+template entities). The hook is unchanged.
+
+- **The plan gauges come back by themselves when the plan integration does.** If
+  Clawdmeter (or whatever supplies plan usage) was not ready when Home Assistant started,
+  for example because its sign-in had expired, the plan source said "none" and never looked
+  again, so the gauges stayed hidden after you signed back in, until the next restart or
+  template reload. It now checks every minute.
+
 ## Hook 0.1.16 (2026-11-15)
 
 **To update:** with the plugin, `/plugin` → **Marketplaces** → claude-fleet → **Update**,

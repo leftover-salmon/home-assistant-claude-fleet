@@ -89,6 +89,14 @@ G prepare
 
 step "4. plan usage"
 G plan
+# The plan helpers arrive AFTER the package has loaded, which is also what a
+# real install sees when its plan integration fails to sign in at startup and
+# is signed in again later. The plan source must find them by itself, with no
+# reload: up to two minute ticks (its state reads its attributes one render late).
+src_state() { H states sensor.claude_plan_source | awk '$1 == "sensor.claude_plan_source" {print $2}'; }
+for i in $(seq 1 30); do [ "$(src_state)" = ok ] && break; sleep 6; done
+[ "$(src_state)" = ok ] || die "the plan source did not find a plan integration that arrived after it loaded (still: $(src_state))"
+ok "the plan source found the late plan integration by itself"
 
 step "5. sessions, through the real hook"
 G run

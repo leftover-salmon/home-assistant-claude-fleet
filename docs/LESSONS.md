@@ -36,6 +36,17 @@ They are here so they cost it once, and most of them apply well beyond this proj
   sequence was empty" under strict undefined. The plan-source sensor filled the log with
   that instead of reporting `unavailable`. `(expand(x) | list + [none]) | first` gives
   `none` to test for.
+- **A template that read nothing is never rendered again, and each template counts on its
+  own.** HA re-renders a template only when something it read on its LAST render changes:
+  an entity, or `now()` for the minute tick. `integration_entities()` counts as neither. And
+  the state and every attribute of one template entity are tracked separately, so `now()`
+  in the state does not wake the attributes. The plan-source sensor finds its source in
+  its attributes; if the plan integration was missing when HA started (Clawdmeter failing
+  to sign in, then signed in again an hour later), they found nothing and were never
+  searched again, the sensor said "none" until the next reload, and the plan gauges stayed
+  hidden with a working integration behind them. The first fix put `now()` in the state
+  only, and the e2e check for exactly this still failed. Anything that has to notice
+  something arriving reads `now()` on every render of every template involved.
 
 ## Numbers that mean something
 
