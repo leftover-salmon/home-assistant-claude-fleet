@@ -815,6 +815,12 @@ template:
   # is a drop: every reading is thrown away, that one included, the rate is 0,
   # and the next minute starts again from whatever the count is by then. A
   # restart costs a minute or two of rate and never draws a spike.
+  # A reading of 0 is no reading. After a restart the day's count is 0, not
+  # unknown, until the sessions arrive from the broker, which can take a
+  # minute; a 0 taken then and the whole day a minute later read as the day
+  # written in two minutes (the demo drew 524,398 a minute). So a 0 empties the
+  # readings like a drop, and the rate starts from the first count above it.
+  # After midnight that costs the first minute of rate and nothing else.
   # Reading on the minute also makes it fall to zero five minutes after the last
   # token instead of holding its last value.
   # The hook counts tokens every couple of minutes while a turn runs
@@ -841,7 +847,7 @@ template:
           {%- endfor %}
           {%- set dropped = u is not none and ns.k | count > 0 and (ns.k[-1][1] | float(0)) > u %}
           {%- if u is none %}{{ none }}
-          {%- elif dropped or not ns.k %}0
+          {%- elif dropped or u == 0 or not ns.k %}0
           {%- else %}
           {%- set span = ([t - (ns.k[0][0] | int), 60] | max) / 60 %}
           {{ ((u - (ns.k[0][1] | float)) / span) | round(0) | int }}
@@ -858,7 +864,7 @@ template:
               {%- endif %}
             {%- endfor %}
             {%- set dropped = u is not none and ns.k | count > 0 and (ns.k[-1][1] | float(0)) > u %}
-            {{ [] if dropped else (ns.k + ([[t, u]] if u is not none else []))[-6:] }}
+            {{ [] if dropped or u == 0 else (ns.k + ([[t, u]] if u is not none else []))[-6:] }}
 
   # Today's tokens per model FAMILY, one sensor each, for the stacked bars on
   # the Tokens tab: a chart series is an entity, and entities cannot appear on

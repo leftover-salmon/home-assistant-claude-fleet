@@ -274,6 +274,21 @@ def check_family_gap(during, after):
     return out
 
 
+def check_rate_history(rates, day_output):
+    """`rates`: every value sensor.claude_output_token_rate recorded during the run;
+    `day_output`: the day's whole output. No reading may be the whole day inside
+    one five-and-a-half-minute window: that is a restart's 0 read as a count."""
+    out = []
+    nums = [float(r) for r in rates if re.match(r"^[0-9.]+$", str(r))]
+    if not nums:
+        return ["sensor.claude_output_token_rate recorded no number during the run"]
+    top = max(nums)
+    if day_output and top > day_output / 5.5:
+        out.append("sensor.claude_output_token_rate reached %d a minute; the day's whole output is %d, "
+                   "so that is the day read as written in the window (a 0 after a restart?)" % (top, day_output))
+    return out
+
+
 # The entity the "Output tokens by machine" chart asks for; check_dashboard holds
 # the dashboard to this exact string, check_sessions holds the hook's sensors to it.
 MACHINE_TOKENS_WILDCARD = "sensor.claude_machine_*_output_tokens"
@@ -1107,6 +1122,9 @@ def self_test():
     expect("family gap: a 0 during the gap fails", check_family_gap(dict(unav, **{FAMILY_TOKENS[0]: "0"}), nums), True)
     expect("family gap: still unavailable after fails", check_family_gap(unav, dict(nums, **{FAMILY_TOKENS[3]: "unavailable"})), True)
     expect("family gap: a missing sensor fails", check_family_gap({}, {}), True)
+    expect("rate history: a believable rate passes", check_rate_history(["0", "10600", "9800"], 1048797), False)
+    expect("rate history: the restart spike fails", check_rate_history(["0", "524398", "262199"], 1048797), True)
+    expect("rate history: no number at all fails", check_rate_history(["unknown"], 1048797), True)
 
     # ---- Today card
     line = "**6** sessions · **%d** prompts · **3** PRs · **28** min waiting on you" % exp["prompts"]
@@ -1283,6 +1301,12 @@ def live():
 
     # ---- the alert blueprints: loaded, and the waiting one fired during the scenario
     since = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() - 6 * 3600)) + "+00:00"
+    st, h = ha.http("GET", "/api/history/period/" + since
+                    + "?filter_entity_id=sensor.claude_output_token_rate&minimal_response&no_attributes",
+                    token=ha.token())
+    record("output token rate: no reading is the whole day at once (a restart's 0 is no reading)",
+           check_rate_history([x.get("state") for x in (h[0] if st == 200 and h else [])], exp["output"])
+           + ([] if st == 200 else ["GET /api/history: %s %s" % (st, h)]))
     st, lb = ha.http("GET", "/api/logbook/" + since, token=ha.token())
     record("alert blueprints loaded; the waiting alert named the waiting session",
            check_alerts(states(), lb if st == 200 else [], exp)

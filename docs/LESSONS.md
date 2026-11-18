@@ -133,6 +133,13 @@ They are here so they cost it once, and most of them apply well beyond this proj
   was 0.53M, a fifth. On one afternoon a single grep over a 26 MB transcript claimed 6.4M on
   its own. The dashboard shows the capped figure and prints RTK's own count beside it. Set
   `BASH_MAX_OUTPUT_LENGTH` in `ha-status.env` if you raised Claude Code's limit.
+- **After a restart the day's count is 0, not unknown, until the sessions arrive.** The
+  output rate already threw its readings away when the count fell, but a restart can also
+  start from 0: the template that adds the sessions up reads 0 while the broker is still
+  delivering them, which took a minute in the demo. A reading taken in that minute, then the
+  whole day a minute later, read as the day written in two minutes: 524,398 tokens a minute,
+  "in flood", on the README screenshots. A 0 now counts as no reading. The e2e check fails
+  if any recorded rate is the day's whole output inside one window.
 - **RTK's ledger is SQLite in WAL mode, so it can't be opened read-only.** A read-only
   connection can't create the shared-memory file a WAL reader needs, and fails with
   "unable to open database file", which looks like a wrong path.

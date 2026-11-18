@@ -21,6 +21,13 @@ below is also a release there.
 
 Changes on `main` that are not in a release yet.
 
+- **Home Assistant files: no flood of output tokens after a restart.** For a minute after
+  Home Assistant starts, the day's output count can read 0 while the sessions arrive from
+  the broker. The output rate read that 0 and then the whole day as the day written in two
+  minutes, and the river card showed hundreds of thousands of tokens a minute, "in flood".
+  A 0 is now no reading.
+- **README screenshots** retaken on the current dashboard, in the dark theme.
+
 ## Home Assistant files 0.7.1 (2026-11-17)
 
 **To update:** copy `homeassistant/packages/claude_fleet.yaml` and
